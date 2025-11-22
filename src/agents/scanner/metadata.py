@@ -33,7 +33,7 @@ class MetadataExtractor:
             dependencies=dependencies,
             entry_points=entry_points,
             key_files=key_files,
-            readme_content=readme_content
+            readme_content=readme_content,
         )
 
     def _detect_project_type(self, repo_path: Path) -> Optional[str]:
@@ -107,9 +107,14 @@ class MetadataExtractor:
         entry_points = []
 
         common_entries = [
-            "main.py", "app.py", "__main__.py",
-            "index.js", "server.js", "app.js",
-            "main.go", "main.rs"
+            "main.py",
+            "app.py",
+            "__main__.py",
+            "index.js",
+            "server.js",
+            "app.js",
+            "main.go",
+            "main.rs",
         ]
 
         for entry in common_entries:
@@ -146,11 +151,21 @@ class MetadataExtractor:
             List of key file paths (relative to repo)
         """
         key_patterns = [
-            "README.md", "README.rst", "README.txt",
-            "package.json", "pyproject.toml", "setup.py", "Cargo.toml", "go.mod",
-            "Dockerfile", "docker-compose.yml",
-            "Makefile", ".env.example",
-            "tsconfig.json", "jest.config.js", "pytest.ini"
+            "README.md",
+            "README.rst",
+            "README.txt",
+            "package.json",
+            "pyproject.toml",
+            "setup.py",
+            "Cargo.toml",
+            "go.mod",
+            "Dockerfile",
+            "docker-compose.yml",
+            "Makefile",
+            ".env.example",
+            "tsconfig.json",
+            "jest.config.js",
+            "pytest.ini",
         ]
 
         key_files = []
@@ -174,7 +189,7 @@ class MetadataExtractor:
             readme_path = repo_path / readme_name
             if readme_path.exists():
                 try:
-                    return readme_path.read_text(encoding='utf-8')
+                    return readme_path.read_text(encoding="utf-8")
                 except OSError:
                     pass
         return None

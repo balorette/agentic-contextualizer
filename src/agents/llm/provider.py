@@ -50,10 +50,7 @@ class AnthropicProvider(LLMProvider):
         self.timeout = timeout
 
         self.client = ChatAnthropic(
-            model=model_name,
-            anthropic_api_key=api_key,
-            max_retries=max_retries,
-            timeout=timeout
+            model=model_name, anthropic_api_key=api_key, max_retries=max_retries, timeout=timeout
         )
 
     def generate(self, prompt: str, system: Optional[str] = None) -> LLMResponse:
@@ -79,7 +76,11 @@ class AnthropicProvider(LLMProvider):
             return LLMResponse(
                 content=response.content,
                 model=self.model_name,
-                tokens_used=response.usage_metadata.get('total_tokens') if hasattr(response, 'usage_metadata') else None
+                tokens_used=(
+                    response.usage_metadata.get("total_tokens")
+                    if hasattr(response, "usage_metadata")
+                    else None
+                ),
             )
         except Exception as e:
             raise RuntimeError(f"LLM generation failed: {str(e)}") from e

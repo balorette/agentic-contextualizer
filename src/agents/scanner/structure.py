@@ -34,10 +34,16 @@ class StructureScanner:
         all_files = self._collect_all_files(repo_path)
 
         return {
-            'tree': tree,
-            'all_files': all_files,
-            'total_files': len(all_files),
-            'total_dirs': len([f for f in repo_path.rglob('*') if f.is_dir() and not self._should_ignore(f, repo_path)])
+            "tree": tree,
+            "all_files": all_files,
+            "total_files": len(all_files),
+            "total_dirs": len(
+                [
+                    f
+                    for f in repo_path.rglob("*")
+                    if f.is_dir() and not self._should_ignore(f, repo_path)
+                ]
+            ),
         }
 
     def _build_tree(self, current_path: Path, repo_root: Path) -> dict:
@@ -50,7 +56,7 @@ class StructureScanner:
         Returns:
             Dictionary representing directory structure
         """
-        tree = {'name': current_path.name, 'type': 'directory', 'children': []}
+        tree = {"name": current_path.name, "type": "directory", "children": []}
 
         try:
             for item in sorted(current_path.iterdir()):
@@ -58,14 +64,16 @@ class StructureScanner:
                     continue
 
                 if item.is_dir():
-                    tree['children'].append(self._build_tree(item, repo_root))
+                    tree["children"].append(self._build_tree(item, repo_root))
                 else:
-                    tree['children'].append({
-                        'name': item.name,
-                        'type': 'file',
-                        'size': item.stat().st_size,
-                        'path': str(item.relative_to(repo_root))
-                    })
+                    tree["children"].append(
+                        {
+                            "name": item.name,
+                            "type": "file",
+                            "size": item.stat().st_size,
+                            "path": str(item.relative_to(repo_root)),
+                        }
+                    )
         except PermissionError:
             pass  # Skip directories we can't access
 
@@ -81,7 +89,7 @@ class StructureScanner:
             List of relative file paths as strings
         """
         files = []
-        for item in repo_path.rglob('*'):
+        for item in repo_path.rglob("*"):
             if item.is_file() and not self._should_ignore(item, repo_path):
                 files.append(str(item.relative_to(repo_path)))
         return sorted(files)

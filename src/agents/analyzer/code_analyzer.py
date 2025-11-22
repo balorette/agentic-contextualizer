@@ -19,11 +19,7 @@ class CodeAnalyzer:
         self.llm = llm_provider
 
     def analyze(
-        self,
-        repo_path: Path,
-        metadata: ProjectMetadata,
-        file_tree: dict,
-        user_summary: str
+        self, repo_path: Path, metadata: ProjectMetadata, file_tree: dict, user_summary: str
     ) -> CodeAnalysis:
         """Analyze repository code.
 
@@ -37,22 +33,22 @@ class CodeAnalyzer:
             CodeAnalysis with extracted insights
         """
         # Read content of key files
-        key_files_content = self._read_key_files(repo_path, metadata.key_files, metadata.entry_points)
+        key_files_content = self._read_key_files(
+            repo_path, metadata.key_files, metadata.entry_points
+        )
 
         # Format file tree for prompt
         file_tree_str = self._format_tree(file_tree)
 
         # Build prompt
         prompt = CODE_ANALYSIS_PROMPT.format(
-            file_tree=file_tree_str,
-            key_files_content=key_files_content,
-            user_summary=user_summary
+            file_tree=file_tree_str, key_files_content=key_files_content, user_summary=user_summary
         )
 
         # Call LLM
         response = self.llm.generate(
             prompt=prompt,
-            system="You are an expert software architect analyzing codebases. Respond with valid JSON only."
+            system="You are an expert software architect analyzing codebases. Respond with valid JSON only.",
         )
 
         # Parse response
@@ -62,12 +58,14 @@ class CodeAnalyzer:
                 architecture_patterns=analysis_data.get("architecture_patterns", []),
                 coding_conventions=analysis_data.get("coding_conventions", {}),
                 tech_stack=analysis_data.get("tech_stack", []),
-                insights=analysis_data.get("insights", "")
+                insights=analysis_data.get("insights", ""),
             )
         except json.JSONDecodeError as e:
             raise ValueError(f"Failed to parse LLM response as JSON: {e}") from e
 
-    def _read_key_files(self, repo_path: Path, key_files: list[str], entry_points: list[str]) -> str:
+    def _read_key_files(
+        self, repo_path: Path, key_files: list[str], entry_points: list[str]
+    ) -> str:
         """Read content of important files.
 
         Args:
@@ -87,7 +85,7 @@ class CodeAnalyzer:
                 try:
                     # Limit file size to avoid token overflow
                     if file_path.stat().st_size < 50_000:  # 50KB limit
-                        content = file_path.read_text(encoding='utf-8', errors='ignore')
+                        content = file_path.read_text(encoding="utf-8", errors="ignore")
                         content_parts.append(f"=== {file_path_str} ===\n{content}\n")
                 except OSError:
                     pass
@@ -107,9 +105,9 @@ class CodeAnalyzer:
         lines = []
         prefix = "  " * indent
 
-        if tree.get('type') == 'directory':
+        if tree.get("type") == "directory":
             lines.append(f"{prefix}{tree['name']}/")
-            for child in tree.get('children', []):
+            for child in tree.get("children", []):
                 lines.append(self._format_tree(child, indent + 1))
         else:
             lines.append(f"{prefix}{tree['name']}")

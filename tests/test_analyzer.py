@@ -1,7 +1,6 @@
 """Tests for the code analyzer."""
 
 import json
-import pytest
 from agents.analyzer.code_analyzer import CodeAnalyzer
 from agents.llm.provider import LLMProvider, LLMResponse
 from agents.models import ProjectMetadata, CodeAnalysis
@@ -16,12 +15,9 @@ class MockLLMProvider(LLMProvider):
             "architecture_patterns": ["Modular"],
             "tech_stack": ["Python"],
             "coding_conventions": {"style": "PEP8"},
-            "insights": "Well-structured Python project"
+            "insights": "Well-structured Python project",
         }
-        return LLMResponse(
-            content=json.dumps(mock_response),
-            model="mock-model"
-        )
+        return LLMResponse(content=json.dumps(mock_response), model="mock-model")
 
 
 def test_code_analyzer_basic(temp_repo, config):
@@ -31,25 +27,20 @@ def test_code_analyzer_basic(temp_repo, config):
         path=temp_repo,
         project_type="python",
         key_files=["README.md"],
-        entry_points=["main.py"]
+        entry_points=["main.py"],
     )
 
     file_tree = {
-        'name': 'test_repo',
-        'type': 'directory',
-        'children': [
-            {'name': 'main.py', 'type': 'file'}
-        ]
+        "name": "test_repo",
+        "type": "directory",
+        "children": [{"name": "main.py", "type": "file"}],
     }
 
     mock_llm = MockLLMProvider()
     analyzer = CodeAnalyzer(mock_llm)
 
     analysis = analyzer.analyze(
-        repo_path=temp_repo,
-        metadata=metadata,
-        file_tree=file_tree,
-        user_summary="Test project"
+        repo_path=temp_repo, metadata=metadata, file_tree=file_tree, user_summary="Test project"
     )
 
     assert isinstance(analysis, CodeAnalysis)

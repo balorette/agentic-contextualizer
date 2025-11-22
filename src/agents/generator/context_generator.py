@@ -22,11 +22,7 @@ class ContextGenerator:
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
     def generate(
-        self,
-        metadata: ProjectMetadata,
-        analysis: CodeAnalysis,
-        user_summary: str,
-        model_name: str
+        self, metadata: ProjectMetadata, analysis: CodeAnalysis, user_summary: str, model_name: str
     ) -> Path:
         """Generate context file.
 
@@ -43,20 +39,18 @@ class ContextGenerator:
         prompt = CONTEXT_GENERATION_PROMPT.format(
             project_metadata=self._format_metadata(metadata),
             code_analysis=self._format_analysis(analysis),
-            user_summary=user_summary
+            user_summary=user_summary,
         )
 
         # Generate content
         response = self.llm.generate(
             prompt=prompt,
-            system="You are generating context documentation for AI agents. Be concise and structured."
+            system="You are generating context documentation for AI agents. Be concise and structured.",
         )
 
         # Build complete context
         context_metadata = ContextMetadata(
-            source_repo=str(metadata.path),
-            user_summary=user_summary,
-            model_used=model_name
+            source_repo=str(metadata.path), user_summary=user_summary, model_used=model_name
         )
 
         # Combine frontmatter and content
@@ -65,7 +59,7 @@ class ContextGenerator:
         # Write to file
         output_path = self.output_dir / metadata.name / "context.md"
         output_path.parent.mkdir(parents=True, exist_ok=True)
-        output_path.write_text(full_content, encoding='utf-8')
+        output_path.write_text(full_content, encoding="utf-8")
 
         return output_path
 
@@ -79,20 +73,18 @@ class ContextGenerator:
         Returns:
             Path to updated context file
         """
-        current_content = context_file.read_text(encoding='utf-8')
+        current_content = context_file.read_text(encoding="utf-8")
 
         prompt = REFINEMENT_PROMPT.format(
-            current_context=current_content,
-            user_request=user_request
+            current_context=current_content, user_request=user_request
         )
 
         response = self.llm.generate(
-            prompt=prompt,
-            system="You are updating context documentation based on user feedback."
+            prompt=prompt, system="You are updating context documentation based on user feedback."
         )
 
         # Write updated content
-        context_file.write_text(response.content, encoding='utf-8')
+        context_file.write_text(response.content, encoding="utf-8")
 
         return context_file
 
@@ -116,7 +108,7 @@ class ContextGenerator:
         parts = [
             f"Architecture: {', '.join(analysis.architecture_patterns)}",
             f"Tech Stack: {', '.join(analysis.tech_stack)}",
-            f"Insights: {analysis.insights}"
+            f"Insights: {analysis.insights}",
         ]
 
         if analysis.coding_conventions:
@@ -135,11 +127,14 @@ class ContextGenerator:
         Returns:
             Complete file content with YAML frontmatter
         """
-        frontmatter = yaml.dump({
-            'source_repo': metadata.source_repo,
-            'scan_date': metadata.scan_date.isoformat(),
-            'user_summary': metadata.user_summary,
-            'model_used': metadata.model_used
-        }, default_flow_style=False)
+        frontmatter = yaml.dump(
+            {
+                "source_repo": metadata.source_repo,
+                "scan_date": metadata.scan_date.isoformat(),
+                "user_summary": metadata.user_summary,
+                "model_used": metadata.model_used,
+            },
+            default_flow_style=False,
+        )
 
         return f"---\n{frontmatter}---\n\n{content}"
