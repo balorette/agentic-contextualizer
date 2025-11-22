@@ -1,0 +1,38 @@
+"""Tests for LLM provider."""
+
+import os
+import pytest
+from agents.llm.provider import AnthropicProvider, LLMResponse
+from agents.config import Config
+
+
+def test_anthropic_provider_initialization(config):
+    """Test Anthropic provider can be initialized."""
+    provider = AnthropicProvider(
+        model_name=config.model_name,
+        api_key=config.api_key
+    )
+    assert provider.model_name == config.model_name
+    assert provider.client is not None
+
+
+@pytest.mark.skipif(
+    not os.getenv("ANTHROPIC_API_KEY"),
+    reason="Requires ANTHROPIC_API_KEY environment variable"
+)
+def test_anthropic_provider_generate():
+    """Integration test for Anthropic provider (requires API key)."""
+    config = Config.from_env()
+    provider = AnthropicProvider(
+        model_name=config.model_name,
+        api_key=config.api_key
+    )
+
+    response = provider.generate(
+        prompt="Say 'Hello, World!' and nothing else.",
+        system="You are a helpful assistant."
+    )
+
+    assert isinstance(response, LLMResponse)
+    assert "Hello" in response.content
+    assert response.model == config.model_name
