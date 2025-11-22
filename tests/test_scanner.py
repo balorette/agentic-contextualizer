@@ -1,8 +1,10 @@
 """Tests for the structure scanner."""
 
+import json
 import pytest
 from pathlib import Path
 from agents.scanner.structure import StructureScanner
+from agents.scanner.metadata import MetadataExtractor
 from agents.config import Config
 
 
@@ -50,3 +52,55 @@ def test_structure_scanner_file_size_limit(tmp_path, config):
 
     assert 'small.txt' in result['all_files']
     assert 'large.txt' not in result['all_files']
+
+
+def test_metadata_extractor_python_project(tmp_path, config):
+    """Test metadata extraction for Python project."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+
+    # Create pyproject.toml
+    pyproject_content = """
+[project]
+name = "test-project"
+dependencies = [
+    "requests>=2.28.0",
+    "pydantic>=2.0.0"
+]
+"""
+    (repo / "pyproject.toml").write_text(pyproject_content)
+    (repo / "README.md").write_text("# Test Project")
+    (repo / "main.py").write_text("print('hello')")
+
+    extractor = MetadataExtractor()
+    metadata = extractor.extract(repo)
+
+    assert metadata.name == "repo"
+    assert metadata.project_type == "python"
+    assert "requests" in metadata.dependencies
+    assert "pydantic" in metadata.dependencies
+    assert "main.py" in metadata.entry_points
+    assert metadata.readme_content == "# Test Project"
+
+
+def test_metadata_extractor_node_project(tmp_path, config):
+    """Test metadata extraction for Node project."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+
+    package_json = {
+        "name": "test-app",
+        "main": "index.js",
+        "dependencies": {
+            "express": "^4.18.0"
+        }
+    }
+    (repo / "package.json").write_text(json.dumps(package_json))
+    (repo / "index.js").write_text("console.log('hello')")
+
+    extractor = MetadataExtractor()
+    metadata = extractor.extract(repo)
+
+    assert metadata.project_type == "node"
+    assert "express" in metadata.dependencies
+    assert "index.js" in metadata.entry_points
