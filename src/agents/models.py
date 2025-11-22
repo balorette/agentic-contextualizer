@@ -1,6 +1,6 @@
 """Core data models for the Agentic Contextualizer."""
 
-from datetime import datetime
+from datetime import datetime, UTC
 from pathlib import Path
 from typing import Optional, Dict, List
 from pydantic import BaseModel, Field
@@ -31,7 +31,7 @@ class ContextMetadata(BaseModel):
     """Frontmatter metadata for generated context files."""
 
     source_repo: str
-    scan_date: datetime = Field(default_factory=datetime.utcnow)
+    scan_date: datetime = Field(default_factory=lambda: datetime.now(UTC))
     user_summary: str
     model_used: str
 
