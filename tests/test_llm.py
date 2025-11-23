@@ -13,8 +13,13 @@ def test_anthropic_provider_initialization(config):
     assert provider.client is not None
 
 
+def _real_api_key_present() -> bool:
+    api_key = os.getenv("ANTHROPIC_API_KEY", "")
+    return bool(api_key and api_key != "your_api_key_here")
+
+
 @pytest.mark.skipif(
-    not os.getenv("ANTHROPIC_API_KEY"), reason="Requires ANTHROPIC_API_KEY environment variable"
+    not _real_api_key_present(), reason="Requires a real ANTHROPIC_API_KEY environment variable"
 )
 def test_anthropic_provider_generate():
     """Integration test for Anthropic provider (requires API key)."""

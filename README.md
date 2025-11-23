@@ -2,6 +2,8 @@
 
 Generate effective context files for codebases that AI coding agents can use to understand projects quickly.
 
+> Requires Python 3.11 or later.
+
 ## Status
 
 ✅ **Ready to Use** - Full pipeline implementation complete
@@ -30,6 +32,8 @@ Copy `.env.example` to `.env` and add your API key:
 cp .env.example .env
 # Edit .env and add your ANTHROPIC_API_KEY
 ```
+
+> ⚠️ Never commit `.env` files. Rotate exposed keys immediately.
 
 ## Usage
 

@@ -20,9 +20,14 @@ class ContextGenerator:
         self.llm = llm_provider
         self.output_dir = output_dir
         self.output_dir.mkdir(parents=True, exist_ok=True)
+        self.default_model_name = getattr(llm_provider, "model_name", "unknown-model")
 
     def generate(
-        self, metadata: ProjectMetadata, analysis: CodeAnalysis, user_summary: str, model_name: str
+        self,
+        metadata: ProjectMetadata,
+        analysis: CodeAnalysis,
+        user_summary: str,
+        model_name: str | None,
     ) -> Path:
         """Generate context file.
 
@@ -49,8 +54,10 @@ class ContextGenerator:
         )
 
         # Build complete context
+        effective_model = model_name or self.default_model_name
+
         context_metadata = ContextMetadata(
-            source_repo=str(metadata.path), user_summary=user_summary, model_used=model_name
+            source_repo=str(metadata.path), user_summary=user_summary, model_used=effective_model
         )
 
         # Combine frontmatter and content
@@ -74,17 +81,25 @@ class ContextGenerator:
             Path to updated context file
         """
         current_content = context_file.read_text(encoding="utf-8")
+        existing_metadata, body = self._extract_frontmatter(current_content)
 
-        prompt = REFINEMENT_PROMPT.format(
-            current_context=current_content, user_request=user_request
-        )
+        prompt = REFINEMENT_PROMPT.format(current_context=body, user_request=user_request)
 
         response = self.llm.generate(
             prompt=prompt, system="You are updating context documentation based on user feedback."
         )
 
-        # Write updated content
-        context_file.write_text(response.content, encoding="utf-8")
+        source_repo = existing_metadata.get("source_repo") or str(context_file.parent.parent)
+        user_summary = existing_metadata.get("user_summary", "")
+
+        updated_metadata = ContextMetadata(
+            source_repo=source_repo,
+            user_summary=user_summary,
+            model_used=self.default_model_name,
+        )
+
+        full_content = self._build_context_file(updated_metadata, response.content.strip())
+        context_file.write_text(full_content, encoding="utf-8")
 
         return context_file
 
@@ -137,4 +152,21 @@ class ContextGenerator:
             default_flow_style=False,
         )
 
-        return f"---\n{frontmatter}---\n\n{content}"
+        return f"---\n{frontmatter}---\n\n{content.strip()}\n"
+
+    def _extract_frontmatter(self, content: str) -> tuple[dict, str]:
+        """Split YAML frontmatter from markdown body."""
+        if not content.startswith("---"):
+            return {}, content
+
+        parts = content.split("---", 2)
+        if len(parts) < 3:
+            return {}, content
+
+        _, raw_meta, rest = parts
+        try:
+            metadata = yaml.safe_load(raw_meta) or {}
+        except yaml.YAMLError:
+            metadata = {}
+
+        return metadata, rest.strip()

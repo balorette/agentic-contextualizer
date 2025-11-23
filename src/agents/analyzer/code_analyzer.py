@@ -6,6 +6,9 @@ from ..models import ProjectMetadata, CodeAnalysis
 from ..llm.provider import LLMProvider
 from ..llm.prompts import CODE_ANALYSIS_PROMPT
 
+MAX_FILES_FOR_ANALYSIS = 20
+MAX_FILE_CHARS = 20_000
+
 
 class CodeAnalyzer:
     """Analyzes code using LLM to extract architectural insights."""
@@ -61,7 +64,10 @@ class CodeAnalyzer:
                 insights=analysis_data.get("insights", ""),
             )
         except json.JSONDecodeError as e:
-            raise ValueError(f"Failed to parse LLM response as JSON: {e}") from e
+            snippet = response.content[:200]
+            raise ValueError(
+                f"Failed to parse LLM response as JSON: {e}. Response snippet: {snippet}"
+            ) from e
 
     def _read_key_files(
         self, repo_path: Path, key_files: list[str], entry_points: list[str]
@@ -76,7 +82,7 @@ class CodeAnalyzer:
         Returns:
             Formatted string with file contents
         """
-        files_to_read = set(key_files + entry_points)
+        files_to_read = sorted(set(key_files + entry_points))[:MAX_FILES_FOR_ANALYSIS]
         content_parts = []
 
         for file_path_str in files_to_read:
@@ -86,7 +92,8 @@ class CodeAnalyzer:
                     # Limit file size to avoid token overflow
                     if file_path.stat().st_size < 50_000:  # 50KB limit
                         content = file_path.read_text(encoding="utf-8", errors="ignore")
-                        content_parts.append(f"=== {file_path_str} ===\n{content}\n")
+                        snippet = content[:MAX_FILE_CHARS]
+                        content_parts.append(f"=== {file_path_str} ===\n{snippet}\n")
                 except OSError:
                     pass
 
