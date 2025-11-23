@@ -28,7 +28,8 @@ def cli():
     help="Execution mode: pipeline (deterministic) or agent (agentic)",
 )
 @click.option("--debug", is_flag=True, help="Enable debug output for agent mode")
-def generate(repo_path: str, summary: str, output: str | None, mode: str, debug: bool):
+@click.option("--stream", is_flag=True, help="Enable streaming output for agent mode (real-time feedback)")
+def generate(repo_path: str, summary: str, output: str | None, mode: str, debug: bool, stream: bool):
     """Generate context for a repository.
 
     Examples:
@@ -38,8 +39,11 @@ def generate(repo_path: str, summary: str, output: str | None, mode: str, debug:
         # Agent mode (agentic, uses LangChain agents)
         python -m agents.main generate /path/to/repo -s "FastAPI REST API" --mode agent
 
-        # Agent mode with debug output
-        python -m agents.main generate /path/to/repo -s "API" --mode agent --debug
+        # Agent mode with streaming output (real-time feedback)
+        python -m agents.main generate /path/to/repo -s "API" --mode agent --stream
+
+        # Agent mode with debug output and streaming
+        python -m agents.main generate /path/to/repo -s "API" --mode agent --debug --stream
     """
     repo = Path(repo_path).resolve()
     config = Config.from_env()
@@ -49,7 +53,7 @@ def generate(repo_path: str, summary: str, output: str | None, mode: str, debug:
         return 1
 
     if mode == "agent":
-        return _generate_agent_mode(repo, summary, config, debug)
+        return _generate_agent_mode(repo, summary, config, debug, stream)
     else:
         return _generate_pipeline_mode(repo, summary, config)
 
@@ -89,13 +93,16 @@ def _generate_pipeline_mode(repo: Path, summary: str, config: Config) -> int:
     return 0
 
 
-def _generate_agent_mode(repo: Path, summary: str, config: Config, debug: bool) -> int:
+def _generate_agent_mode(repo: Path, summary: str, config: Config, debug: bool, stream: bool) -> int:
     """Generate context using agent mode."""
     from .factory import create_contextualizer_agent
     from .memory import create_checkpointer, create_agent_config
     from .observability import configure_tracing, is_tracing_enabled
 
     click.echo(f"🤖 Agent mode: Analyzing repository: {repo}")
+
+    if stream:
+        click.echo("   Streaming: Enabled")
 
     # Configure tracing
     configure_tracing()
@@ -120,19 +127,40 @@ def _generate_agent_mode(repo: Path, summary: str, config: Config, debug: bool) 
 
     # Invoke agent
     try:
-        click.echo("\n🔄 Agent executing...")
+        if stream:
+            # Use streaming for real-time feedback
+            from .streaming import stream_agent_execution, simple_stream_agent_execution
+            import sys
 
-        result = agent.invoke(
-            {"messages": [{"role": "user", "content": user_message}]}, config=agent_config
-        )
+            # Use rich formatting if stdout is a TTY, otherwise use simple streaming
+            if sys.stdout.isatty():
+                result = stream_agent_execution(
+                    agent,
+                    messages=[{"role": "user", "content": user_message}],
+                    config=agent_config,
+                    verbose=debug,
+                )
+            else:
+                result = simple_stream_agent_execution(
+                    agent,
+                    messages=[{"role": "user", "content": user_message}],
+                    config=agent_config,
+                )
+        else:
+            # Use standard invocation
+            click.echo("\n🔄 Agent executing...")
 
-        # Extract final message
-        final_message = result.get("messages", [])[-1]
-        output_content = final_message.content if hasattr(final_message, "content") else str(final_message)
+            result = agent.invoke(
+                {"messages": [{"role": "user", "content": user_message}]}, config=agent_config
+            )
 
-        click.echo("\n📋 Agent Response:")
-        click.echo(output_content)
-        click.echo("\n✅ Agent execution complete")
+            # Extract final message
+            final_message = result.get("messages", [])[-1]
+            output_content = final_message.content if hasattr(final_message, "content") else str(final_message)
+
+            click.echo("\n📋 Agent Response:")
+            click.echo(output_content)
+            click.echo("\n✅ Agent execution complete")
 
         return 0
 
@@ -156,7 +184,8 @@ def _generate_agent_mode(repo: Path, summary: str, config: Config, debug: bool) 
     help="Execution mode: pipeline (deterministic) or agent (agentic)",
 )
 @click.option("--debug", is_flag=True, help="Enable debug output for agent mode")
-def refine(context_file: str, request: str, mode: str, debug: bool):
+@click.option("--stream", is_flag=True, help="Enable streaming output for agent mode (real-time feedback)")
+def refine(context_file: str, request: str, mode: str, debug: bool, stream: bool):
     """Refine an existing context file.
 
     Examples:
@@ -165,6 +194,9 @@ def refine(context_file: str, request: str, mode: str, debug: bool):
 
         # Agent mode (uses conversation history from generation)
         python -m agents.main refine contexts/myapp/context.md -r "Add auth" --mode agent
+
+        # Agent mode with streaming output
+        python -m agents.main refine contexts/myapp/context.md -r "Add auth" --mode agent --stream
     """
     context_path = Path(context_file)
     config = Config.from_env()
@@ -174,7 +206,7 @@ def refine(context_file: str, request: str, mode: str, debug: bool):
         return 1
 
     if mode == "agent":
-        return _refine_agent_mode(context_path, request, config, debug)
+        return _refine_agent_mode(context_path, request, config, debug, stream)
     else:
         return _refine_pipeline_mode(context_path, request, config)
 
@@ -192,13 +224,16 @@ def _refine_pipeline_mode(context_path: Path, request: str, config: Config) -> i
     return 0
 
 
-def _refine_agent_mode(context_path: Path, request: str, config: Config, debug: bool) -> int:
+def _refine_agent_mode(context_path: Path, request: str, config: Config, debug: bool, stream: bool) -> int:
     """Refine context using agent mode."""
     from .factory import create_contextualizer_agent
     from .memory import create_checkpointer, create_agent_config
     from .observability import configure_tracing, is_tracing_enabled
 
     click.echo(f"🤖 Agent mode: Refining context: {context_path}")
+
+    if stream:
+        click.echo("   Streaming: Enabled")
 
     # Try to infer repo path from context file location
     # Context files are stored as contexts/{repo-name}/context.md
@@ -228,19 +263,40 @@ def _refine_agent_mode(context_path: Path, request: str, config: Config, debug: 
 
     # Invoke agent
     try:
-        click.echo("\n🔄 Agent executing...")
+        if stream:
+            # Use streaming for real-time feedback
+            from .streaming import stream_agent_execution, simple_stream_agent_execution
+            import sys
 
-        result = agent.invoke(
-            {"messages": [{"role": "user", "content": user_message}]}, config=agent_config
-        )
+            # Use rich formatting if stdout is a TTY, otherwise use simple streaming
+            if sys.stdout.isatty():
+                result = stream_agent_execution(
+                    agent,
+                    messages=[{"role": "user", "content": user_message}],
+                    config=agent_config,
+                    verbose=debug,
+                )
+            else:
+                result = simple_stream_agent_execution(
+                    agent,
+                    messages=[{"role": "user", "content": user_message}],
+                    config=agent_config,
+                )
+        else:
+            # Use standard invocation
+            click.echo("\n🔄 Agent executing...")
 
-        # Extract final message
-        final_message = result.get("messages", [])[-1]
-        output_content = final_message.content if hasattr(final_message, "content") else str(final_message)
+            result = agent.invoke(
+                {"messages": [{"role": "user", "content": user_message}]}, config=agent_config
+            )
 
-        click.echo("\n📋 Agent Response:")
-        click.echo(output_content)
-        click.echo("\n✅ Agent execution complete")
+            # Extract final message
+            final_message = result.get("messages", [])[-1]
+            output_content = final_message.content if hasattr(final_message, "content") else str(final_message)
+
+            click.echo("\n📋 Agent Response:")
+            click.echo(output_content)
+            click.echo("\n✅ Agent execution complete")
 
         return 0
 
