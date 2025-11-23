@@ -119,6 +119,7 @@ class StructureScanner:
 
         Args:
             repo_path: Repository root
+            gitignore_spec: Optional PathSpec for .gitignore patterns
 
         Returns:
             Tuple of (list of relative file paths, total directory count)
