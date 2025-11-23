@@ -108,7 +108,7 @@ class AnthropicProvider(LLMProvider):
                     text = block.get("text")
                     if text:
                         parts.append(text)
-
+                    continue
             return "".join(parts).strip()
 
         return str(content)
