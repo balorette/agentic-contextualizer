@@ -1,7 +1,7 @@
 """Abstract LLM provider interface."""
 
 from abc import ABC, abstractmethod
-from typing import Optional
+from typing import Any, Optional
 from pydantic import BaseModel
 from langchain_anthropic import ChatAnthropic
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -72,9 +72,10 @@ class AnthropicProvider(LLMProvider):
 
         try:
             response = self.client.invoke(messages)
+            content = self._coerce_content(response.content)
 
             return LLMResponse(
-                content=response.content,
+                content=content,
                 model=self.model_name,
                 tokens_used=(
                     response.usage_metadata.get("total_tokens")
@@ -84,3 +85,30 @@ class AnthropicProvider(LLMProvider):
             )
         except Exception as e:
             raise RuntimeError(f"LLM generation failed: {str(e)}") from e
+
+    @staticmethod
+    def _coerce_content(content: Any) -> str:
+        """Ensure LangChain responses are flattened into plain text."""
+        if isinstance(content, str):
+            return content
+
+        if isinstance(content, list):
+            parts: list[str] = []
+            for block in content:
+                if isinstance(block, str):
+                    parts.append(block)
+                    continue
+
+                text = getattr(block, "text", None)
+                if text:
+                    parts.append(text)
+                    continue
+
+                if isinstance(block, dict):
+                    text = block.get("text")
+                    if text:
+                        parts.append(text)
+                    continue
+            return "".join(parts).strip()
+
+        return str(content)

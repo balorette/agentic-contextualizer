@@ -51,6 +51,26 @@ def test_structure_scanner_file_size_limit(tmp_path, config):
     assert "large.txt" not in result["all_files"]
 
 
+def test_structure_scanner_respects_gitignore(tmp_path, config):
+    """Ensure scanner honors .gitignore patterns."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+
+    (repo / ".gitignore").write_text("ignored_dir/\n*.log\n")
+    (repo / "ignored_dir").mkdir()
+    (repo / "ignored_dir" / "secret.txt").write_text("noop")
+
+    (repo / "keep.txt").write_text("keep")
+    (repo / "ignored.log").write_text("log")
+
+    scanner = StructureScanner(config)
+    result = scanner.scan(repo)
+
+    assert "keep.txt" in result["all_files"]
+    assert "ignored_dir/secret.txt" not in result["all_files"]
+    assert "ignored.log" not in result["all_files"]
+
+
 def test_metadata_extractor_python_project(tmp_path, config):
     """Test metadata extraction for Python project."""
     repo = tmp_path / "repo"
