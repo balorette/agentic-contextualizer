@@ -1,7 +1,7 @@
 """Abstract LLM provider interface."""
 
 from abc import ABC, abstractmethod
-from typing import Any, Optional
+from typing import Any, Optional, Type
 from pydantic import BaseModel
 from langchain_anthropic import ChatAnthropic
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -85,6 +85,44 @@ class AnthropicProvider(LLMProvider):
             )
         except Exception as e:
             raise RuntimeError(f"LLM generation failed: {str(e)}") from e
+
+    def generate_structured(
+        self, prompt: str, system: Optional[str] = None, schema: Type[BaseModel] = None
+    ) -> BaseModel:
+        """Generate structured output using Pydantic schema.
+
+        This method uses LangChain's with_structured_output() to guarantee
+        valid structured output without markdown wrapping.
+
+        Args:
+            prompt: User prompt
+            system: Optional system prompt
+            schema: Pydantic model class defining the expected output structure
+
+        Returns:
+            Instance of the provided Pydantic schema with validated data
+
+        Raises:
+            RuntimeError: If LLM generation fails
+            ValueError: If schema is not provided
+        """
+        if schema is None:
+            raise ValueError("schema parameter is required for generate_structured()")
+
+        messages = []
+
+        if system:
+            messages.append(SystemMessage(content=system))
+
+        messages.append(HumanMessage(content=prompt))
+
+        try:
+            # Use with_structured_output for guaranteed valid output
+            structured_llm = self.client.with_structured_output(schema)
+            result = structured_llm.invoke(messages)
+            return result
+        except Exception as e:
+            raise RuntimeError(f"Structured LLM generation failed: {str(e)}") from e
 
     @staticmethod
     def _coerce_content(content: Any) -> str:

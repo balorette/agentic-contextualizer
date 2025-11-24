@@ -1,13 +1,26 @@
 """LLM-based code analysis."""
 
-import json
 from pathlib import Path
+from pydantic import BaseModel, Field
 from ..models import ProjectMetadata, CodeAnalysis
 from ..llm.provider import LLMProvider
 from ..llm.prompts import CODE_ANALYSIS_PROMPT
 
 MAX_FILES_FOR_ANALYSIS = 20
 MAX_FILE_CHARS = 20_000
+
+
+class CodeAnalysisOutput(BaseModel):
+    """Schema for structured code analysis output from LLM."""
+
+    architecture_patterns: list[str] = Field(
+        description="List of architectural patterns identified (e.g., MVC, microservices, monolith)"
+    )
+    coding_conventions: dict[str, str] = Field(
+        description="Dictionary of coding conventions (error handling, testing patterns, state management)"
+    )
+    tech_stack: list[str] = Field(description="List of technologies and frameworks used")
+    insights: str = Field(description="Notable design decisions and insights about the codebase")
 
 
 class CodeAnalyzer:
@@ -48,26 +61,20 @@ class CodeAnalyzer:
             file_tree=file_tree_str, key_files_content=key_files_content, user_summary=user_summary
         )
 
-        # Call LLM
-        response = self.llm.generate(
+        # Call LLM with structured output
+        analysis_output = self.llm.generate_structured(
             prompt=prompt,
-            system="You are an expert software architect analyzing codebases. Respond with valid JSON only.",
+            system="You are an expert software architect analyzing codebases.",
+            schema=CodeAnalysisOutput,
         )
 
-        # Parse response
-        try:
-            analysis_data = json.loads(response.content)
-            return CodeAnalysis(
-                architecture_patterns=analysis_data.get("architecture_patterns", []),
-                coding_conventions=analysis_data.get("coding_conventions", {}),
-                tech_stack=analysis_data.get("tech_stack", []),
-                insights=analysis_data.get("insights", ""),
-            )
-        except json.JSONDecodeError as e:
-            snippet = response.content[:200]
-            raise ValueError(
-                f"Failed to parse LLM response as JSON: {e}. Response snippet: {snippet}"
-            ) from e
+        # Convert to CodeAnalysis model
+        return CodeAnalysis(
+            architecture_patterns=analysis_output.architecture_patterns,
+            coding_conventions=analysis_output.coding_conventions,
+            tech_stack=analysis_output.tech_stack,
+            insights=analysis_output.insights,
+        )
 
     def _read_key_files(
         self, repo_path: Path, key_files: list[str], entry_points: list[str]
