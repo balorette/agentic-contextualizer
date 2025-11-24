@@ -73,8 +73,12 @@ def configure_tracing(
         # Try to verify the connection works
         print(f"✅ LangSmith tracing enabled")
         print(f"   Project: {project_name}")
-        print(f"   View traces at: https://smith.langchain.com/o/{client.info()['tenant_id']}/projects/p")
-    except Exception as e:
+        try:
+            project = client.read_project(project_name)
+            project_id = project["id"]
+            print(f"   View traces at: https://smith.langchain.com/o/{client.info()['tenant_id']}/projects/p/{project_id}")
+        except Exception as e:
+            print(f"   (Could not retrieve project ID for direct link: {e})")
         print(f"⚠️  LangSmith connection failed: {e}")
         print("   Tracing will be disabled.")
         os.environ["LANGSMITH_TRACING"] = "false"

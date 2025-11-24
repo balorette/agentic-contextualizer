@@ -143,7 +143,7 @@ def read_file_snippet(file_path: str, start_line: int = 0, num_lines: int = 50) 
 
         # Read file
         try:
-            with path.open("r", encoding="utf-8", errors="ignore") as f:
+            with path.open("r", encoding="utf-8", errors="replace") as f:
                 all_lines = f.readlines()
         except Exception as e:
             return {"error": f"Failed to read file: {str(e)}"}
