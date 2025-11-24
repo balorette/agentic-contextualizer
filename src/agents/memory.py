@@ -114,9 +114,7 @@ def generate_thread_id(repo_path: str, session_id: Optional[str] = None) -> str:
     return f"repo-{thread_id}"
 
 
-def create_agent_config(
-    repo_path: str, session_id: Optional[str] = None, **extra_config
-) -> dict:
+def create_agent_config(repo_path: str, session_id: Optional[str] = None, **extra_config) -> dict:
     """Create agent configuration with thread ID and optional extras.
 
     This is a convenience function that creates the config dict
@@ -190,15 +188,9 @@ def clear_checkpoint(checkpointer: MemorySaver, thread_id: str) -> None:
         ```
 
     Note:
-        For MemorySaver, this is a no-op since state is in-memory.
-        For Redis backend (future), this would delete the checkpoint from Redis.
+        This uses the checkpointer's public delete_thread API.
+        For MemorySaver, this deletes in-memory state.
+        For other backends (e.g., Redis), this would delete from the backend.
     """
-    # For MemorySaver, state is in-process dict
-    # Clearing requires accessing internal storage
-    # This is a simple implementation; production version would be more robust
-    if hasattr(checkpointer, "storage"):
-        # MemorySaver stores data in a dict
-        if thread_id in checkpointer.storage:
-            del checkpointer.storage[thread_id]
-    # If storage not accessible, this is a no-op
-    # (MemorySaver will be cleared when process exits anyway)
+    # Use the documented delete_thread API instead of accessing private storage
+    checkpointer.delete_thread(thread_id)
