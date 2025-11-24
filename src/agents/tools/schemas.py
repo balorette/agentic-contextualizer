@@ -73,7 +73,7 @@ class AnalyzeCodeInput(BaseModel):
 
     repo_path: str = Field(description="Path to the repository")
     user_summary: str = Field(description="User's description of the project")
-    metadata: dict[str, Any] = Field(
+    metadata_dict: dict[str, Any] = Field(
         default_factory=dict, description="Metadata from extract_metadata"
     )
     file_tree: dict[str, Any] = Field(
@@ -109,8 +109,8 @@ class GenerateContextInput(BaseModel):
 
     repo_path: str = Field(description="Path to the repository")
     user_summary: str = Field(description="User's description of the project")
-    metadata: dict[str, Any] = Field(description="Metadata from extract_metadata")
-    analysis: dict[str, Any] = Field(description="Analysis from analyze_code")
+    metadata_dict: dict[str, Any] = Field(description="Metadata from extract_metadata")
+    analysis_dict: dict[str, Any] = Field(description="Analysis from analyze_code")
     output_path: Optional[str] = Field(
         default=None, description="Optional custom output path for context file"
     )
