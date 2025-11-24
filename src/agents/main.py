@@ -112,7 +112,7 @@ def _generate_agent_mode(repo: Path, summary: str, config: Config, debug: bool, 
 
     # Create agent
     agent = create_contextualizer_agent(
-        model_name=f"anthropic:{config.model_name}", checkpointer=checkpointer, debug=debug
+        model_name=config.model_name if config.model_name.startswith("anthropic:") else f"anthropic:{config.model_name}", checkpointer=checkpointer, debug=debug
     )
 
     # Create agent configuration with thread ID
