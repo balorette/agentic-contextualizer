@@ -19,7 +19,7 @@ class TokenUsage:
     def cost_estimate(self) -> float:
         """Estimate cost in USD based on Claude Sonnet 4.5 pricing.
 
-        Pricing as of 2025-01:
+        Pricing as of 2025-11:
         - Input: $3.00 per 1M tokens
         - Output: $15.00 per 1M tokens
         """
