@@ -134,14 +134,14 @@ def _generate_agent_mode(repo: Path, summary: str, config: Config, debug: bool, 
 
             # Use rich formatting if stdout is a TTY, otherwise use simple streaming
             if sys.stdout.isatty():
-                result = stream_agent_execution(
+                stream_agent_execution(
                     agent,
                     messages=[{"role": "user", "content": user_message}],
                     config=agent_config,
                     verbose=debug,
                 )
             else:
-                result = simple_stream_agent_execution(
+                simple_stream_agent_execution(
                     agent,
                     messages=[{"role": "user", "content": user_message}],
                     config=agent_config,
@@ -270,14 +270,14 @@ def _refine_agent_mode(context_path: Path, request: str, config: Config, debug: 
 
             # Use rich formatting if stdout is a TTY, otherwise use simple streaming
             if sys.stdout.isatty():
-                result = stream_agent_execution(
+                stream_agent_execution(
                     agent,
                     messages=[{"role": "user", "content": user_message}],
                     config=agent_config,
                     verbose=debug,
                 )
             else:
-                result = simple_stream_agent_execution(
+                simple_stream_agent_execution(
                     agent,
                     messages=[{"role": "user", "content": user_message}],
                     config=agent_config,
