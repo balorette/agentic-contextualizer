@@ -1,8 +1,7 @@
 """Integration tests for agent execution end-to-end."""
 
 import pytest
-from pathlib import Path
-from unittest.mock import Mock, patch, MagicMock
+from unittest.mock import Mock
 from src.agents.factory import create_contextualizer_agent
 from src.agents.memory import create_checkpointer, create_agent_config
 
@@ -294,7 +293,7 @@ class TestAgentMessageHandling:
 
     def test_agent_accepts_message_format(self):
         """Test that agent accepts correct message format."""
-        agent = create_contextualizer_agent()
+        create_contextualizer_agent()
 
         # Valid message format
         messages = [{"role": "user", "content": "Test message"}]

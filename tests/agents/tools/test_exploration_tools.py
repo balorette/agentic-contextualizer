@@ -1,7 +1,6 @@
 """Tests for exploration utility tools."""
 
 import pytest
-from pathlib import Path
 from src.agents.tools.exploration_tools import list_key_files, read_file_snippet
 
 
