@@ -1,8 +1,3 @@
-# Virtual environments
-.venv/
-venv/
-env/
-
 # Python
 __pycache__/
 *.py[cod]
@@ -25,21 +20,26 @@ wheels/
 .installed.cfg
 *.egg
 
-# IDEs
+# Virtual environments
+.venv/
+venv/
+ENV/
+env/
+
+# IDE
 .vscode/
 .idea/
 *.swp
 *.swo
-
-# OS
-.DS_Store
-Thumbs.db
 
 # Testing
 .pytest_cache/
 .coverage
 htmlcov/
 
-# Outputs
-contexts/
-*.context.md
+# Environment
+.env
+
+# Generated contexts (keep the directory)
+contexts/*
+!contexts/.gitkeep
