@@ -1,7 +1,9 @@
 """Discovery phase for scoped context generation."""
 
+import os
 import re
-from typing import List, Set
+from pathlib import Path
+from typing import List, Set, Dict
 
 # Common stopwords to filter out
 STOPWORDS: Set[str] = {
@@ -49,3 +51,85 @@ def extract_keywords(question: str) -> List[str]:
             seen.add(word)
 
     return keywords
+
+
+# Directories to always ignore
+IGNORED_DIRS: Set[str] = {
+    ".git", "node_modules", "__pycache__", ".venv", "venv",
+    "dist", "build", ".pytest_cache", ".mypy_cache", ".ruff_cache",
+    "egg-info", ".egg-info", ".tox", ".nox",
+}
+
+# File extensions to search
+SEARCHABLE_EXTENSIONS: Set[str] = {
+    ".py", ".js", ".ts", ".tsx", ".jsx", ".go", ".rs", ".java",
+    ".rb", ".php", ".c", ".cpp", ".h", ".hpp", ".cs", ".swift",
+    ".kt", ".scala", ".md", ".txt", ".yaml", ".yml", ".json",
+    ".toml", ".ini", ".cfg", ".conf",
+}
+
+
+def search_relevant_files(
+    repo_path: Path,
+    keywords: List[str],
+    max_results: int = 50,
+) -> List[Dict]:
+    """Search for files relevant to the given keywords.
+
+    Args:
+        repo_path: Path to repository root
+        keywords: List of keywords to search for
+        max_results: Maximum number of results to return
+
+    Returns:
+        List of dicts with: path, match_type, score
+    """
+    results: List[Dict] = []
+    keyword_set = set(kw.lower() for kw in keywords)
+
+    for root, dirs, files in os.walk(repo_path):
+        # Prune ignored directories
+        dirs[:] = [d for d in dirs if d not in IGNORED_DIRS and not d.endswith(".egg-info")]
+
+        root_path = Path(root)
+
+        for filename in files:
+            file_path = root_path / filename
+            rel_path = str(file_path.relative_to(repo_path))
+
+            # Check filename match
+            filename_lower = filename.lower()
+            name_matches = sum(1 for kw in keyword_set if kw in filename_lower)
+
+            # Check directory path match
+            path_lower = rel_path.lower()
+            path_matches = sum(1 for kw in keyword_set if kw in path_lower)
+
+            if name_matches > 0 or path_matches > 0:
+                results.append({
+                    "path": rel_path,
+                    "match_type": "filename",
+                    "score": name_matches * 2 + path_matches,
+                })
+                continue
+
+            # Check content match for searchable files
+            suffix = file_path.suffix.lower()
+            if suffix in SEARCHABLE_EXTENSIONS:
+                try:
+                    if file_path.stat().st_size > 500_000:  # Skip large files
+                        continue
+                    content = file_path.read_text(encoding="utf-8", errors="ignore").lower()
+                    content_matches = sum(1 for kw in keyword_set if kw in content)
+                    if content_matches > 0:
+                        results.append({
+                            "path": rel_path,
+                            "match_type": "content",
+                            "score": content_matches,
+                        })
+                except (OSError, UnicodeDecodeError):
+                    pass
+
+    # Sort by score descending, limit results
+    results.sort(key=lambda x: x["score"], reverse=True)
+    return results[:max_results]
