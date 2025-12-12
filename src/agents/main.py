@@ -8,6 +8,9 @@ from .scanner.metadata import MetadataExtractor
 from .analyzer.code_analyzer import CodeAnalyzer
 from .generator.context_generator import ContextGenerator
 from .llm.provider import AnthropicProvider
+from .scoper.discovery import extract_keywords, search_relevant_files
+from .scoper.scoped_analyzer import ScopedAnalyzer
+from .scoper.scoped_generator import ScopedGenerator
 
 
 @click.group()
@@ -305,6 +308,227 @@ def _refine_agent_mode(context_path: Path, request: str, config: Config, debug: 
         if debug:
             import traceback
 
+            traceback.print_exc()
+        return 1
+
+
+@cli.command()
+@click.argument("source", type=click.Path(exists=True))
+@click.option("--question", "-q", required=True, help="Question/topic to scope to")
+@click.option("--output", "-o", type=click.Path(), help="Output file path")
+@click.option(
+    "--mode",
+    "-m",
+    type=click.Choice(["pipeline", "agent"]),
+    default="pipeline",
+    help="Execution mode: pipeline (deterministic) or agent (agentic)",
+)
+@click.option("--debug", is_flag=True, help="Enable debug output")
+@click.option("--stream", is_flag=True, help="Enable streaming output (agent mode)")
+def scope(source: str, question: str, output: str | None, mode: str, debug: bool, stream: bool):
+    """Generate scoped context for a specific question.
+
+    SOURCE can be either:
+    - A repository path: scopes directly from the repo
+    - A context.md file: uses existing context as starting point
+
+    Examples:
+        # Scope from repo
+        python -m agents.main scope /path/to/repo -q "weather functionality"
+
+        # Scope from existing context
+        python -m agents.main scope contexts/repo/context.md -q "auth flow"
+
+        # With custom output
+        python -m agents.main scope /path/to/repo -q "API endpoints" -o my-scope.md
+
+        # Agent mode with streaming
+        python -m agents.main scope /path/to/repo -q "auth" --mode agent --stream
+    """
+    source_path = Path(source).resolve()
+    config = Config.from_env()
+
+    if not config.api_key:
+        click.echo("Error: ANTHROPIC_API_KEY not set in environment", err=True)
+        return 1
+
+    # Determine if source is a repo or context file
+    is_context_file = source_path.is_file() and source_path.suffix == ".md"
+
+    if mode == "agent":
+        return _scope_agent_mode(source_path, question, config, is_context_file, debug, stream)
+    else:
+        return _scope_pipeline_mode(source_path, question, config, is_context_file, output)
+
+
+def _scope_pipeline_mode(
+    source_path: Path,
+    question: str,
+    config: Config,
+    is_context_file: bool,
+    output: str | None,
+) -> int:
+    """Generate scoped context using pipeline mode."""
+    click.echo(f"🔍 Scoping: {question}")
+
+    # Determine repo path
+    if is_context_file:
+        # Extract repo path from context file's location
+        # contexts/{repo-name}/context.md -> infer repo or read from frontmatter
+        repo_name = source_path.parent.name
+        repo_path = source_path.parent.parent.parent  # Best guess
+        source_context = str(source_path)
+        click.echo(f"   Source: context file for {repo_name}")
+    else:
+        repo_path = source_path
+        repo_name = source_path.name
+        source_context = None
+        click.echo(f"   Source: repository {repo_name}")
+
+    # Phase 1: Discovery
+    click.echo("\n📂 Phase 1: Discovery...")
+    keywords = extract_keywords(question)
+    click.echo(f"   Keywords: {', '.join(keywords)}")
+
+    if not is_context_file:
+        # Scan repository structure
+        scanner = StructureScanner(config)
+        structure = scanner.scan(repo_path)
+        file_tree = structure["tree"]
+
+        # Search for relevant files
+        candidates = search_relevant_files(repo_path, keywords)
+        click.echo(f"   Found {len(candidates)} candidate files")
+    else:
+        # When scoping from context, we still need the repo to search
+        # For now, require the repo to exist at expected location
+        click.echo("   (Searching based on context file location)")
+        # Simplified: search in parent directories
+        candidates = []
+        file_tree = {"name": repo_name, "type": "directory", "children": []}
+
+    if not candidates and not is_context_file:
+        click.echo("   No matching files found. Searching full repo...")
+        # Fallback: use all files from structure scan
+        candidates = [
+            {"path": f, "match_type": "fallback", "score": 1}
+            for f in structure.get("all_files", [])[:20]
+        ]
+
+    # Phase 2: LLM-guided exploration
+    click.echo(f"\n🤖 Phase 2: Exploration with {config.model_name}...")
+    llm = AnthropicProvider(config.model_name, config.api_key)
+    analyzer = ScopedAnalyzer(llm)
+
+    analysis_result = analyzer.analyze(
+        repo_path=repo_path,
+        question=question,
+        candidate_files=candidates,
+        file_tree=file_tree,
+    )
+
+    click.echo(f"   Analyzed {len(analysis_result['relevant_files'])} files")
+
+    # Phase 3: Generate scoped context
+    click.echo("\n📝 Phase 3: Generating scoped context...")
+    generator = ScopedGenerator(llm, config.output_dir)
+
+    output_path = Path(output) if output else None
+    result_path = generator.generate(
+        repo_name=repo_name,
+        question=question,
+        relevant_files=analysis_result["relevant_files"],
+        insights=analysis_result["insights"],
+        model_name=config.model_name,
+        source_repo=str(repo_path),
+        source_context=source_context,
+        output_path=output_path,
+    )
+
+    click.echo(f"\n✅ Scoped context generated: {result_path}")
+    return 0
+
+
+def _scope_agent_mode(
+    source_path: Path,
+    question: str,
+    config: Config,
+    is_context_file: bool,
+    debug: bool,
+    stream: bool,
+) -> int:
+    """Generate scoped context using agent mode."""
+    from .factory import create_contextualizer_agent
+    from .memory import create_checkpointer, create_agent_config
+    from .observability import configure_tracing, is_tracing_enabled
+
+    click.echo(f"🤖 Agent mode: Scoping '{question}'")
+
+    if stream:
+        click.echo("   Streaming: Enabled")
+
+    # Configure tracing
+    configure_tracing()
+
+    # Create checkpointer
+    checkpointer = create_checkpointer()
+
+    # Create agent
+    agent = create_contextualizer_agent(
+        model_name=config.model_name if config.model_name.startswith("anthropic:") else f"anthropic:{config.model_name}",
+        checkpointer=checkpointer,
+        debug=debug,
+    )
+
+    # Create agent configuration
+    agent_config = create_agent_config(f"scope-{source_path}")
+
+    # Build user message
+    if is_context_file:
+        user_message = f"Generate scoped context for the question: '{question}'. Use the existing context at {source_path} as a starting point."
+    else:
+        user_message = f"Generate scoped context for the repository at {source_path}. Focus specifically on: {question}"
+
+    click.echo(f"   Thread ID: {agent_config['configurable']['thread_id']}")
+    if is_tracing_enabled():
+        click.echo("   Tracing: Enabled")
+
+    try:
+        if stream:
+            from .streaming import stream_agent_execution, simple_stream_agent_execution
+            import sys
+
+            if sys.stdout.isatty():
+                stream_agent_execution(
+                    agent,
+                    messages=[{"role": "user", "content": user_message}],
+                    config=agent_config,
+                    verbose=debug,
+                )
+            else:
+                simple_stream_agent_execution(
+                    agent,
+                    messages=[{"role": "user", "content": user_message}],
+                    config=agent_config,
+                )
+        else:
+            click.echo("\n🔄 Agent executing...")
+            result = agent.invoke(
+                {"messages": [{"role": "user", "content": user_message}]},
+                config=agent_config,
+            )
+            final_message = result.get("messages", [])[-1]
+            output_content = final_message.content if hasattr(final_message, "content") else str(final_message)
+            click.echo("\n📋 Agent Response:")
+            click.echo(output_content)
+            click.echo("\n✅ Agent execution complete")
+
+        return 0
+
+    except Exception as e:
+        click.echo(f"\n❌ Agent execution failed: {e}", err=True)
+        if debug:
+            import traceback
             traceback.print_exc()
         return 1
 
