@@ -2,8 +2,8 @@
 
 import pytest
 import json
-from agents.scoper.scoped_analyzer import ScopedAnalyzer
-from agents.llm.provider import LLMProvider, LLMResponse
+from src.agents.scoper.scoped_analyzer import ScopedAnalyzer
+from src.agents.llm.provider import LLMProvider, LLMResponse
 
 
 class MockLLMProvider(LLMProvider):

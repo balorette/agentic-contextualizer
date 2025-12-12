@@ -1,6 +1,6 @@
 """Tests for data models."""
 
-from agents.models import ScopedContextMetadata
+from src.agents.models import ScopedContextMetadata
 
 
 class TestScopedContextMetadata:

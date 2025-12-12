@@ -1,7 +1,7 @@
 """Tests for discovery module."""
 
 import pytest
-from agents.scoper.discovery import extract_keywords, search_relevant_files
+from src.agents.scoper.discovery import extract_keywords, search_relevant_files
 
 
 class TestExtractKeywords:

@@ -1,8 +1,8 @@
 """Tests for scoped context generator."""
 
 import pytest
-from agents.scoper.scoped_generator import ScopedGenerator
-from agents.llm.provider import LLMProvider, LLMResponse
+from src.agents.scoper.scoped_generator import ScopedGenerator
+from src.agents.llm.provider import LLMProvider, LLMResponse
 
 
 class MockLLMProvider(LLMProvider):

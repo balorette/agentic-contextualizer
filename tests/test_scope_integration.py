@@ -4,7 +4,7 @@ import pytest
 from click.testing import CliRunner
 from unittest.mock import patch, Mock
 from src.agents.main import cli
-from agents.llm.provider import LLMResponse
+from src.agents.llm.provider import LLMResponse
 
 
 class TestScopeIntegration:
@@ -138,7 +138,7 @@ See tests/test_weather.py for usage examples.
 
     def test_scope_discovery_finds_relevant_files(self, sample_repo):
         """Test that discovery phase finds weather-related files."""
-        from agents.scoper.discovery import extract_keywords, search_relevant_files
+        from src.agents.scoper.discovery import extract_keywords, search_relevant_files
 
         keywords = extract_keywords("weather forecast functionality")
         results = search_relevant_files(sample_repo, keywords)
