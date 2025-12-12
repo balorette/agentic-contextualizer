@@ -2,8 +2,7 @@
 
 import pytest
 import json
-from pathlib import Path
-from agents.scoper.scoped_analyzer import ScopedAnalyzer, ScopeExplorationOutput
+from agents.scoper.scoped_analyzer import ScopedAnalyzer
 from agents.llm.provider import LLMProvider, LLMResponse
 
 

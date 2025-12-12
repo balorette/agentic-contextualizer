@@ -1,8 +1,6 @@
 """Integration tests for scoped context generation."""
 
 import pytest
-import json
-from pathlib import Path
 from click.testing import CliRunner
 from unittest.mock import patch, Mock
 from src.agents.main import cli

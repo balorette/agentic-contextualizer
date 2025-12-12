@@ -1,7 +1,6 @@
 """Tests for discovery module."""
 
 import pytest
-from pathlib import Path
 from agents.scoper.discovery import extract_keywords, search_relevant_files
 
 

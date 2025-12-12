@@ -4,7 +4,6 @@ import re
 import yaml
 from pathlib import Path
 from typing import Dict
-from datetime import datetime, UTC
 from ..llm.provider import LLMProvider
 from ..llm.prompts import SCOPE_GENERATION_PROMPT
 from ..models import ScopedContextMetadata

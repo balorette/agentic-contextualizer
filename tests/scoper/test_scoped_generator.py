@@ -1,7 +1,6 @@
 """Tests for scoped context generator."""
 
 import pytest
-from pathlib import Path
 from agents.scoper.scoped_generator import ScopedGenerator
 from agents.llm.provider import LLMProvider, LLMResponse
 

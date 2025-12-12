@@ -1,8 +1,5 @@
 """Tests for data models."""
 
-import pytest
-from datetime import datetime, UTC
-from pathlib import Path
 from agents.models import ScopedContextMetadata
 
 
