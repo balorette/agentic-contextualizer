@@ -6,7 +6,13 @@ from pydantic import BaseModel, Field
 from ..llm.provider import LLMProvider
 from ..llm.prompts import SCOPE_EXPLORATION_PROMPT
 
+# Maximum number of LLM-guided exploration rounds before forcing synthesis.
+# This limits cost and latency by preventing excessive iterations.
 MAX_EXPLORATION_ROUNDS = 3
+
+# Maximum number of characters from each file to include in the LLM prompt.
+# This helps avoid exceeding the LLM's context window and keeps prompts efficient.
+# Value chosen based on typical LLM context limits and empirical prompt size testing.
 MAX_FILE_CONTENT_CHARS = 15_000
 
 
@@ -135,13 +141,41 @@ class ScopedAnalyzer:
         )
 
     def _read_file(self, repo_path: Path, file_path: str) -> str | None:
-        """Read file content safely."""
-        full_path = repo_path / file_path
+        """Read file content safely with path traversal protection.
+
+        Args:
+            repo_path: Root path of the repository
+            file_path: Relative path to file within repo
+
+        Returns:
+            File content as string, or None if file cannot be read safely
+        """
         try:
+            # Resolve to absolute path and check it stays within repo
+            full_path = (repo_path / file_path).resolve()
+            repo_resolved = repo_path.resolve()
+
+            # Verify the resolved path is within the repository
+            try:
+                full_path.relative_to(repo_resolved)
+            except ValueError:
+                # Path escapes repository boundary
+                return None
+
+            # Check it's a real file (not symlink to outside)
+            if full_path.is_symlink():
+                # Resolve symlink and verify target is also in repo
+                real_path = full_path.resolve()
+                try:
+                    real_path.relative_to(repo_resolved)
+                except ValueError:
+                    return None
+
             if full_path.exists() and full_path.is_file():
                 if full_path.stat().st_size < 500_000:  # 500KB limit
                     return full_path.read_text(encoding="utf-8", errors="ignore")
         except OSError:
+            # File access errors (permissions, broken symlinks, etc.)
             pass
         return None
 
