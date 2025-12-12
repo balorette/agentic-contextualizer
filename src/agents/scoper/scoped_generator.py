@@ -8,6 +8,8 @@ from ..llm.provider import LLMProvider
 from ..llm.prompts import SCOPE_GENERATION_PROMPT
 from ..models import ScopedContextMetadata
 
+# Maximum number of characters from each file to include in the generation prompt.
+# Files exceeding this limit are truncated to prevent LLM context overflow.
 MAX_CONTENT_PER_FILE = 10_000
 
 

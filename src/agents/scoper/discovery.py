@@ -5,7 +5,9 @@ import re
 from pathlib import Path
 from typing import List, Set, Dict
 
-# Common stopwords to filter out
+# Common English stopwords plus domain-specific terms to filter from keyword extraction.
+# Based on standard NLP stopword lists with additions for code-related queries
+# (e.g., "functionality", "feature", "work" which appear in questions but aren't searchable).
 STOPWORDS: Set[str] = {
     "a", "an", "the", "is", "are", "was", "were", "be", "been", "being",
     "have", "has", "had", "do", "does", "did", "will", "would", "could",
