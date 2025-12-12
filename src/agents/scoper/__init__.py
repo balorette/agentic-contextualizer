@@ -1,0 +1,1 @@
+"""Scoped context generation module."""
