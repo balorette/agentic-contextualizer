@@ -1,7 +1,6 @@
 """Tests for path traversal protection in scoped analyzer."""
 
 import pytest
-from pathlib import Path
 from src.agents.scoper.scoped_analyzer import ScopedAnalyzer
 from src.agents.llm.provider import LLMProvider, LLMResponse
 
