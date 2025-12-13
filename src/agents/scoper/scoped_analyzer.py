@@ -179,7 +179,7 @@ class ScopedAnalyzer:
             pass
         return None
 
-    def _format_tree(self, tree: Dict, indent: int = 0) -> str:
+    def _format_tree(self, tree: Dict[str, Any], indent: int = 0) -> str:
         """Format file tree as indented string."""
         lines = []
         prefix = "  " * indent
