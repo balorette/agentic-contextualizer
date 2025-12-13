@@ -28,7 +28,7 @@ class TestScopeIntegration:
         (repo / "tests").mkdir()
 
         # Weather module
-        (repo / "src" / "weather" / "__init__.py").write_text("")
+        (repo / "src" / "weather" / "__init__.py").write_text('"""Weather module for forecast services."""\n')
         (repo / "src" / "weather" / "service.py").write_text("""
 class WeatherService:
     def get_forecast(self, location: str) -> dict:
@@ -50,7 +50,7 @@ class Forecast:
 """)
 
         # Auth module (unrelated)
-        (repo / "src" / "auth" / "__init__.py").write_text("")
+        (repo / "src" / "auth" / "__init__.py").write_text('"""Authentication module."""\n')
         (repo / "src" / "auth" / "login.py").write_text("""
 def authenticate(username: str, password: str) -> bool:
     return True
