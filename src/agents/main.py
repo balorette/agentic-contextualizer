@@ -1,6 +1,7 @@
 """Main CLI entry point for Agentic Contextualizer."""
 
 import click
+import yaml
 from pathlib import Path
 from .config import Config
 from .scanner.structure import StructureScanner
@@ -11,6 +12,36 @@ from .llm.provider import AnthropicProvider
 from .scoper.discovery import extract_keywords, search_relevant_files
 from .scoper.scoped_analyzer import ScopedAnalyzer
 from .scoper.scoped_generator import ScopedGenerator
+
+
+def _extract_repo_from_context(context_path: Path) -> str | None:
+    """Extract source_repo from context file frontmatter.
+
+    Args:
+        context_path: Path to context.md file
+
+    Returns:
+        Source repo path from frontmatter, or None if not found
+    """
+    try:
+        content = context_path.read_text(encoding="utf-8")
+        if not content.startswith("---"):
+            return None
+
+        # Find end of frontmatter
+        end_marker = content.find("---", 3)
+        if end_marker == -1:
+            return None
+
+        frontmatter_text = content[3:end_marker].strip()
+        frontmatter = yaml.safe_load(frontmatter_text)
+
+        if isinstance(frontmatter, dict):
+            return frontmatter.get("source_repo")
+    except Exception:
+        # YAML parse errors, file read errors, etc.
+        pass
+    return None
 
 
 @click.group()
@@ -373,12 +404,21 @@ def _scope_pipeline_mode(
 
     # Determine repo path
     if is_context_file:
-        # Extract repo path from context file's location
-        # contexts/{repo-name}/context.md -> infer repo or read from frontmatter
-        repo_name = source_path.parent.name
-        repo_path = source_path.parent.parent.parent  # Best guess
+        # Extract repo path from context file's frontmatter
+        source_repo = _extract_repo_from_context(source_path)
+        if source_repo and Path(source_repo).exists():
+            repo_path = Path(source_repo)
+            repo_name = repo_path.name
+            click.echo(f"   Source: context file (repo: {repo_name})")
+        else:
+            # Fallback: infer from directory structure
+            repo_name = source_path.parent.name
+            repo_path = source_path.parent.parent.parent
+            click.echo(f"   Source: context file for {repo_name} (inferred)")
+            if not repo_path.exists():
+                click.echo(f"   Warning: Could not locate repository at {repo_path}", err=True)
+                click.echo("   Consider using --repo flag or ensure source_repo is set in context file", err=True)
         source_context = str(source_path)
-        click.echo(f"   Source: context file for {repo_name}")
     else:
         repo_path = source_path
         repo_name = source_path.name
@@ -390,25 +430,17 @@ def _scope_pipeline_mode(
     keywords = extract_keywords(question)
     click.echo(f"   Keywords: {', '.join(keywords)}")
 
-    if not is_context_file:
-        # Scan repository structure
-        scanner = StructureScanner(config)
-        structure = scanner.scan(repo_path)
-        file_tree = structure["tree"]
+    # Always scan repository structure for file discovery
+    scanner = StructureScanner(config)
+    structure = scanner.scan(repo_path)
+    file_tree = structure["tree"]
 
-        # Search for relevant files
-        candidates = search_relevant_files(repo_path, keywords)
-        click.echo(f"   Found {len(candidates)} candidate files")
-    else:
-        # When scoping from context, we still need the repo to search
-        # For now, require the repo to exist at expected location
-        click.echo("   (Searching based on context file location)")
-        # Simplified: search in parent directories
-        candidates = []
-        file_tree = {"name": repo_name, "type": "directory", "children": []}
+    # Search for relevant files
+    candidates = search_relevant_files(repo_path, keywords)
+    click.echo(f"   Found {len(candidates)} candidate files")
 
-    if not candidates and not is_context_file:
-        click.echo("   No matching files found. Searching full repo...")
+    if not candidates:
+        click.echo("   No matching files found. Using fallback search...")
         # Fallback: use all files from structure scan
         candidates = [
             {"path": f, "match_type": "fallback", "score": 1}
