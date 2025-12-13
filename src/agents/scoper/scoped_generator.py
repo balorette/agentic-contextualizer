@@ -98,11 +98,19 @@ class ScopedGenerator:
         return "\n\n".join(parts)
 
     def _sanitize_filename(self, question: str) -> str:
-        """Convert question to safe filename."""
+        """Convert question to safe, unique filename.
+
+        Uses first 4 words of question plus timestamp suffix to ensure uniqueness
+        even when multiple questions share the same prefix.
+        """
+        from datetime import datetime
         # Take first few words, remove special chars
         sanitized = re.sub(r"[^a-zA-Z0-9\s-]", "", question.lower())
         words = sanitized.split()[:4]
-        return "-".join(words) if words else "context"
+        base_name = "-".join(words) if words else "context"
+        # Add timestamp suffix for uniqueness (HHMMSS format)
+        timestamp = datetime.now().strftime("%H%M%S")
+        return f"{base_name}-{timestamp}"
 
     def _build_context_file(self, metadata: ScopedContextMetadata, content: str) -> str:
         """Build final context file with frontmatter."""

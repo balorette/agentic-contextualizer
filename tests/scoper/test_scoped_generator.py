@@ -74,7 +74,7 @@ class TestScopedGenerator:
         assert "files_analyzed:" in content
 
     def test_generate_uses_sanitized_filename(self, output_dir):
-        """Test that output filename is sanitized from question."""
+        """Test that output filename is sanitized from question with timestamp."""
         mock_llm = MockLLMProvider()
         generator = ScopedGenerator(mock_llm, output_dir)
 
@@ -86,7 +86,10 @@ class TestScopedGenerator:
             model_name="claude-3-5-sonnet",
         )
 
-        # Filename should be sanitized (no special chars)
+        # Filename should be sanitized (no special chars) with timestamp
         assert "scope-" in output_path.name
         assert "/" not in output_path.name
         assert "?" not in output_path.name
+        # Should have timestamp suffix (6 digits)
+        import re
+        assert re.search(r"-\d{6}\.md$", output_path.name), "Should have timestamp suffix"
