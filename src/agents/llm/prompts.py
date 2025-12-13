@@ -52,3 +52,57 @@ USER REQUEST:
 
 Generate the updated context file incorporating the requested changes.
 """
+
+
+SCOPE_EXPLORATION_PROMPT = """You are analyzing a codebase to find all files relevant to a specific question.
+
+SCOPE QUESTION:
+{scope_question}
+
+FILE TREE:
+{file_tree}
+
+CANDIDATE FILES (already found by keyword search):
+{candidate_files}
+
+CANDIDATE FILE CONTENTS:
+{candidate_contents}
+
+Your task:
+1. Review the candidate files and their contents
+2. Identify what additional files should be examined (imports, related tests, configs)
+3. Determine if you have enough context to answer the scope question
+
+Respond with JSON:
+{{
+    "additional_files_needed": ["path/to/file1.py", "path/to/file2.py"],
+    "reasoning": "Why these files are needed",
+    "sufficient_context": true/false,
+    "preliminary_insights": "What you've learned so far"
+}}
+
+If sufficient_context is true, additional_files_needed should be empty.
+"""
+
+
+SCOPE_GENERATION_PROMPT = """Generate a focused context document for the following scope question.
+
+SCOPE QUESTION:
+{scope_question}
+
+RELEVANT FILES AND CONTENTS:
+{relevant_files}
+
+ANALYSIS INSIGHTS:
+{insights}
+
+Create a markdown document with:
+1. Summary - Direct answer to the scope question
+2. Relevant sections based on what's important for this specific topic
+   (could be API endpoints, data models, processing logic, etc. - use your judgment)
+3. Key Files - List of files the reader should examine
+4. Usage Examples / Related Tests - If available, show how this functionality is used
+
+Be concise but thorough. Focus only on information relevant to the scope question.
+Do NOT include a generic structure - tailor sections to what matters for this topic.
+"""

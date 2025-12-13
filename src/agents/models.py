@@ -36,6 +36,17 @@ class ContextMetadata(BaseModel):
     model_used: str
 
 
+class ScopedContextMetadata(BaseModel):
+    """Frontmatter metadata for scoped context files."""
+
+    source_repo: str
+    scope_question: str
+    scan_date: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    model_used: str
+    files_analyzed: int
+    source_context: Optional[str] = None  # Set when scoping from existing context
+
+
 class GeneratedContext(BaseModel):
     """Complete generated context file."""
 

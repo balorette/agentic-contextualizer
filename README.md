@@ -104,6 +104,45 @@ python -m agents.main refine contexts/myproject/context.md \
 #   -r, --request      What to change or add (required)
 ```
 
+### Scope Context
+
+Generate focused context for a specific question or topic:
+
+```bash
+# Scope from repository
+python -m agents.main scope /path/to/backend \
+  --question "weather functionality"
+
+# Scope from existing context file (faster, reuses metadata)
+python -m agents.main scope contexts/backend/context.md \
+  --question "authentication flow"
+
+# With custom output path
+python -m agents.main scope /path/to/repo \
+  --question "API endpoints" \
+  --output my-scoped-context.md
+
+# Agent mode with streaming
+python -m agents.main scope /path/to/repo \
+  --question "database models" \
+  --mode agent --stream
+```
+
+**Options:**
+- `SOURCE` - Repository path OR existing context.md file
+- `-q, --question` - The question/topic to scope to (required)
+- `-o, --output` - Custom output file path
+- `-m, --mode` - `pipeline` (default) or `agent`
+- `--stream` - Enable streaming output (agent mode)
+- `--debug` - Enable debug output
+
+**How scoping works:**
+1. **Discovery** - Extracts keywords, searches for matching files
+2. **Exploration** - LLM analyzes candidates, follows imports/tests
+3. **Synthesis** - Generates focused context for the specific question
+
+**Output:** `contexts/{repo-name}/scope-{topic}.md`
+
 ### Example Workflow
 
 ```bash

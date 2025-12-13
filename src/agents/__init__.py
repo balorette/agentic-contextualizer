@@ -8,6 +8,13 @@ from .models import (
     CodeAnalysis,
     ContextMetadata,
     GeneratedContext,
+    ScopedContextMetadata,
+)
+from .scoper import (
+    extract_keywords,
+    search_relevant_files,
+    ScopedAnalyzer,
+    ScopedGenerator,
 )
 
 __all__ = [
@@ -16,4 +23,9 @@ __all__ = [
     "CodeAnalysis",
     "ContextMetadata",
     "GeneratedContext",
+    "ScopedContextMetadata",
+    "extract_keywords",
+    "search_relevant_files",
+    "ScopedAnalyzer",
+    "ScopedGenerator",
 ]
