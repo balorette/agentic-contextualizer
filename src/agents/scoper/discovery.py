@@ -130,6 +130,8 @@ def search_relevant_files(
                             "score": content_matches,
                         })
                 except (OSError, UnicodeDecodeError):
+                    # Skip files that can't be read (permissions, encoding issues)
+                    # These are non-critical - we simply exclude them from search results
                     pass
 
     # Sort by score descending, limit results
