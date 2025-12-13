@@ -1,6 +1,5 @@
 """Tests for scoping from context files."""
 
-import pytest
 from src.agents.main import _extract_repo_from_context
 
 
