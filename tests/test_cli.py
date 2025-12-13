@@ -524,11 +524,13 @@ Test content.
         assert "--question" in result.output
 
     def test_scope_requires_question(self, runner, sample_repo):
-        """Test that scope requires --question flag."""
+        """Test that scope command requires --question flag."""
         result = runner.invoke(cli, ["scope", str(sample_repo)])
 
         assert result.exit_code != 0
-        assert "Missing option" in result.output or "required" in result.output.lower()
+        # Verify error specifically mentions the missing --question option
+        assert "--question" in result.output or "-q" in result.output, \
+            f"Error should mention missing --question flag, got: {result.output}"
 
     def test_scope_requires_existing_source(self, runner):
         """Test that scope requires existing repo or context file."""
