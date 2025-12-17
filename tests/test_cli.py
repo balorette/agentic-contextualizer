@@ -4,7 +4,7 @@ import pytest
 from pathlib import Path
 from unittest.mock import patch, Mock, MagicMock
 from click.testing import CliRunner
-from src.agents.main import cli, generate, refine
+from src.agents.main import cli
 
 
 class TestCLIGenerate:
@@ -476,4 +476,102 @@ class TestCLIOutput:
 
         # Stream mode should be indicated
         # (Would show in actual execution)
+        assert result.exit_code == 0
+
+
+class TestCLIScope:
+    """Test the scope command."""
+
+    @pytest.fixture
+    def runner(self):
+        """Create Click test runner."""
+        return CliRunner()
+
+    @pytest.fixture
+    def sample_repo(self, tmp_path):
+        """Create a minimal sample repository."""
+        repo = tmp_path / "sample_repo"
+        repo.mkdir()
+        (repo / "README.md").write_text("# Test Project")
+        (repo / "weather.py").write_text("def get_weather(): pass")
+        return repo
+
+    @pytest.fixture
+    def sample_context_file(self, tmp_path):
+        """Create a sample existing context file."""
+        contexts = tmp_path / "contexts" / "myrepo"
+        contexts.mkdir(parents=True)
+        context_file = contexts / "context.md"
+        context_file.write_text("""---
+source_repo: /path/to/myrepo
+scan_date: 2025-01-01T00:00:00Z
+user_summary: Test project
+model_used: claude-3-5-sonnet
+---
+
+# Repository Context: myrepo
+
+Test content.
+""")
+        return context_file
+
+    def test_scope_help(self, runner):
+        """Test that scope --help works."""
+        result = runner.invoke(cli, ["scope", "--help"])
+
+        assert result.exit_code == 0
+        assert "Generate scoped context" in result.output or "scope" in result.output.lower()
+        assert "--question" in result.output
+
+    def test_scope_requires_question(self, runner, sample_repo):
+        """Test that scope command requires --question flag."""
+        result = runner.invoke(cli, ["scope", str(sample_repo)])
+
+        assert result.exit_code != 0
+        # Verify error specifically mentions the missing --question option
+        assert "--question" in result.output or "-q" in result.output, \
+            f"Error should mention missing --question flag, got: {result.output}"
+
+    def test_scope_requires_existing_source(self, runner):
+        """Test that scope requires existing repo or context file."""
+        result = runner.invoke(
+            cli, ["scope", "/nonexistent/path", "-q", "test question"]
+        )
+
+        assert result.exit_code != 0
+
+    @patch("src.agents.main._scope_pipeline_mode")
+    def test_scope_from_repo(self, mock_pipeline, runner, sample_repo):
+        """Test scoping directly from a repository."""
+        mock_pipeline.return_value = 0
+
+        result = runner.invoke(
+            cli, ["scope", str(sample_repo), "-q", "weather functionality"]
+        )
+
+        mock_pipeline.assert_called_once()
+        assert result.exit_code == 0
+
+    @patch("src.agents.main._scope_pipeline_mode")
+    def test_scope_from_context_file(self, mock_pipeline, runner, sample_context_file):
+        """Test scoping from an existing context file."""
+        mock_pipeline.return_value = 0
+
+        result = runner.invoke(
+            cli, ["scope", str(sample_context_file), "-q", "authentication flow"]
+        )
+
+        mock_pipeline.assert_called_once()
+        assert result.exit_code == 0
+
+    @patch("src.agents.main._scope_agent_mode")
+    def test_scope_agent_mode(self, mock_agent, runner, sample_repo):
+        """Test scope in agent mode."""
+        mock_agent.return_value = 0
+
+        result = runner.invoke(
+            cli, ["scope", str(sample_repo), "-q", "test", "--mode", "agent"]
+        )
+
+        mock_agent.assert_called_once()
         assert result.exit_code == 0
