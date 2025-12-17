@@ -5,6 +5,7 @@ from typing import Dict, List, Any
 from pydantic import BaseModel, Field
 from ..llm.provider import LLMProvider
 from ..llm.prompts import SCOPE_EXPLORATION_PROMPT
+from .backends import FileBackend, LocalFileBackend
 
 # Maximum number of LLM-guided exploration rounds before forcing synthesis.
 # This limits cost and latency by preventing excessive iterations.
@@ -34,15 +35,35 @@ class ScopeExplorationOutput(BaseModel):
 class ScopedAnalyzer:
     """Analyzes repository with LLM guidance for scoped context."""
 
-    def __init__(self, llm_provider: LLMProvider, max_rounds: int = MAX_EXPLORATION_ROUNDS):
+    def __init__(
+        self,
+        llm_provider: LLMProvider,
+        file_backend: FileBackend | None = None,
+        max_rounds: int = MAX_EXPLORATION_ROUNDS,
+    ):
         """Initialize analyzer.
 
         Args:
             llm_provider: LLM provider for API calls
+            file_backend: Backend for file access (created lazily if not provided)
             max_rounds: Maximum exploration rounds before forcing synthesis
         """
         self.llm = llm_provider
+        self._file_backend = file_backend
         self.max_rounds = max_rounds
+
+    def _get_backend(self, repo_path: Path) -> FileBackend:
+        """Get or create file backend for the repository.
+
+        Args:
+            repo_path: Path to repository (used if no backend was provided)
+
+        Returns:
+            FileBackend instance
+        """
+        if self._file_backend is not None:
+            return self._file_backend
+        return LocalFileBackend(repo_path)
 
     def analyze(
         self,
@@ -62,6 +83,8 @@ class ScopedAnalyzer:
         Returns:
             Dict with relevant_files and insights
         """
+        backend = self._get_backend(repo_path)
+
         # Track all files we've examined
         examined_files: Dict[str, str] = {}
         all_insights: List[str] = []
@@ -73,7 +96,7 @@ class ScopedAnalyzer:
             # Read files we haven't examined yet
             for file_path in files_to_examine:
                 if file_path not in examined_files:
-                    content = self._read_file(repo_path, file_path)
+                    content = backend.read_file(file_path)
                     if content:
                         examined_files[file_path] = content
 
@@ -139,45 +162,6 @@ class ScopedAnalyzer:
             system="You are analyzing code to find files relevant to a specific question.",
             schema=ScopeExplorationOutput,
         )
-
-    def _read_file(self, repo_path: Path, file_path: str) -> str | None:
-        """Read file content safely with path traversal protection.
-
-        Args:
-            repo_path: Root path of the repository
-            file_path: Relative path to file within repo
-
-        Returns:
-            File content as string, or None if file cannot be read safely
-        """
-        try:
-            # Resolve to absolute path and check it stays within repo
-            full_path = (repo_path / file_path).resolve()
-            repo_resolved = repo_path.resolve()
-
-            # Verify the resolved path is within the repository
-            try:
-                full_path.relative_to(repo_resolved)
-            except ValueError:
-                # Path escapes repository boundary
-                return None
-
-            # Check it's a real file (not symlink to outside)
-            if full_path.is_symlink():
-                # Resolve symlink and verify target is also in repo
-                real_path = full_path.resolve()
-                try:
-                    real_path.relative_to(repo_resolved)
-                except ValueError:
-                    return None
-
-            if full_path.exists() and full_path.is_file():
-                if full_path.stat().st_size < 500_000:  # 500KB limit
-                    return full_path.read_text(encoding="utf-8", errors="ignore")
-        except OSError:
-            # File access errors (permissions, broken symlinks, etc.)
-            pass
-        return None
 
     def _format_tree(self, tree: Dict[str, Any], indent: int = 0) -> str:
         """Format file tree as indented string."""

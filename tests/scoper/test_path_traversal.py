@@ -1,27 +1,11 @@
-"""Tests for path traversal protection in scoped analyzer."""
+"""Tests for path traversal protection in file backends."""
 
 import pytest
-from src.agents.scoper.scoped_analyzer import ScopedAnalyzer
-from src.agents.llm.provider import LLMProvider, LLMResponse
+from src.agents.scoper.backends import LocalFileBackend
 
 
-class MockLLMProvider(LLMProvider):
-    """Mock LLM provider for testing."""
-
-    def generate(self, prompt: str, system: str | None = None) -> LLMResponse:
-        return LLMResponse(content="{}", model="mock")
-
-    def generate_structured(self, prompt: str, system: str | None, schema):
-        return schema(
-            additional_files_needed=[],
-            reasoning="Done",
-            sufficient_context=True,
-            preliminary_insights="Test",
-        )
-
-
-class TestPathTraversalProtection:
-    """Test that path traversal attacks are prevented."""
+class TestLocalFileBackendPathTraversal:
+    """Test that path traversal attacks are prevented in LocalFileBackend."""
 
     @pytest.fixture
     def sample_repo(self, tmp_path):
@@ -41,30 +25,27 @@ class TestPathTraversalProtection:
 
     def test_read_file_blocks_parent_traversal(self, sample_repo, sensitive_file):
         """Test that ../path traversal is blocked."""
-        mock_llm = MockLLMProvider()
-        analyzer = ScopedAnalyzer(mock_llm)
+        backend = LocalFileBackend(sample_repo)
 
         # Attempt to read file outside repo via parent traversal
-        result = analyzer._read_file(sample_repo, "../secret.txt")
+        result = backend.read_file("../secret.txt")
 
         assert result is None, "Should block parent directory traversal"
 
     def test_read_file_blocks_absolute_path(self, sample_repo, sensitive_file):
         """Test that absolute paths outside repo are blocked."""
-        mock_llm = MockLLMProvider()
-        analyzer = ScopedAnalyzer(mock_llm)
+        backend = LocalFileBackend(sample_repo)
 
         # Attempt to read via absolute path
-        result = analyzer._read_file(sample_repo, str(sensitive_file))
+        result = backend.read_file(str(sensitive_file))
 
         assert result is None, "Should block absolute paths outside repo"
 
     def test_read_file_allows_valid_paths(self, sample_repo):
         """Test that valid paths within repo still work."""
-        mock_llm = MockLLMProvider()
-        analyzer = ScopedAnalyzer(mock_llm)
+        backend = LocalFileBackend(sample_repo)
 
-        result = analyzer._read_file(sample_repo, "src/safe.py")
+        result = backend.read_file("src/safe.py")
 
         assert result == "safe content", "Should allow valid repo paths"
 
@@ -76,9 +57,29 @@ class TestPathTraversalProtection:
         symlink = sample_repo / "src" / "sneaky_link"
         symlink.symlink_to(secret)
 
-        mock_llm = MockLLMProvider()
-        analyzer = ScopedAnalyzer(mock_llm)
+        backend = LocalFileBackend(sample_repo)
 
-        result = analyzer._read_file(sample_repo, "src/sneaky_link")
+        result = backend.read_file("src/sneaky_link")
 
         assert result is None, "Should block symlinks escaping repo"
+
+    def test_file_exists_blocks_traversal(self, sample_repo, sensitive_file):
+        """Test that file_exists also blocks traversal."""
+        backend = LocalFileBackend(sample_repo)
+
+        assert backend.file_exists("../secret.txt") is False
+        assert backend.file_exists(str(sensitive_file)) is False
+        assert backend.file_exists("src/safe.py") is True
+
+    def test_read_file_respects_max_size(self, sample_repo):
+        """Test that files exceeding max_size are rejected."""
+        large_file = sample_repo / "large.txt"
+        large_file.write_text("x" * 1000)
+
+        backend = LocalFileBackend(sample_repo)
+
+        # Should read with default max_size
+        assert backend.read_file("large.txt") is not None
+
+        # Should reject when max_size is smaller
+        assert backend.read_file("large.txt", max_size=100) is None

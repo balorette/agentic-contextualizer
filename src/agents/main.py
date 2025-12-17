@@ -489,8 +489,8 @@ def _scope_agent_mode(
     debug: bool,
     stream: bool,
 ) -> int:
-    """Generate scoped context using agent mode."""
-    from .factory import create_contextualizer_agent
+    """Generate scoped context using agent mode with dedicated scoped agent."""
+    from .scoper import create_scoped_agent
     from .memory import create_checkpointer, create_agent_config
     from .observability import configure_tracing, is_tracing_enabled
 
@@ -499,27 +499,39 @@ def _scope_agent_mode(
     if stream:
         click.echo("   Streaming: Enabled")
 
+    # Determine repo path
+    if is_context_file:
+        source_repo = _extract_repo_from_context(source_path)
+        if source_repo and Path(source_repo).exists():
+            repo_path = Path(source_repo)
+        else:
+            # Fallback: infer from directory structure
+            repo_path = source_path.parent.parent.parent
+        click.echo(f"   Repository: {repo_path}")
+    else:
+        repo_path = source_path
+
     # Configure tracing
     configure_tracing()
 
     # Create checkpointer
     checkpointer = create_checkpointer()
 
-    # Create agent
-    agent = create_contextualizer_agent(
-        model_name=config.model_name if config.model_name.startswith("anthropic:") else f"anthropic:{config.model_name}",
+    # Create scoped agent with dedicated tools
+    model_name = config.model_name if config.model_name.startswith("anthropic:") else f"anthropic:{config.model_name}"
+    agent = create_scoped_agent(
+        repo_path=repo_path,
+        model_name=model_name,
         checkpointer=checkpointer,
+        output_dir=config.output_dir,
         debug=debug,
     )
 
     # Create agent configuration
-    agent_config = create_agent_config(f"scope-{source_path}")
+    agent_config = create_agent_config(f"scope-{repo_path}-{question[:20]}")
 
     # Build user message
-    if is_context_file:
-        user_message = f"Generate scoped context for the question: '{question}'. Use the existing context at {source_path} as a starting point."
-    else:
-        user_message = f"Generate scoped context for the repository at {source_path}. Focus specifically on: {question}"
+    user_message = f"Generate scoped context answering: {question}"
 
     click.echo(f"   Thread ID: {agent_config['configurable']['thread_id']}")
     if is_tracing_enabled():
