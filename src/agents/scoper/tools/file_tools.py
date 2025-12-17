@@ -8,7 +8,7 @@ from ..discovery import extract_keywords, search_relevant_files, SEARCHABLE_EXTE
 from .schemas import ReadFileOutput, SearchFilesOutput, FileMatch
 
 # Default maximum characters to return from a file
-DEFAULT_MAX_CHARS = 15_000
+DEFAULT_MAX_CHARS = 13_500
 
 
 def read_scoped_file(

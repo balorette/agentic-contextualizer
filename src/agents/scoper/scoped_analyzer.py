@@ -9,12 +9,25 @@ from .backends import FileBackend, LocalFileBackend
 
 # Maximum number of LLM-guided exploration rounds before forcing synthesis.
 # This limits cost and latency by preventing excessive iterations.
-MAX_EXPLORATION_ROUNDS = 3
+MAX_EXPLORATION_ROUNDS = 2
 
 # Maximum number of characters from each file to include in the LLM prompt.
 # This helps avoid exceeding the LLM's context window and keeps prompts efficient.
 # Value chosen based on typical LLM context limits and empirical prompt size testing.
-MAX_FILE_CONTENT_CHARS = 15_000
+MAX_FILE_CONTENT_CHARS = 8_000
+
+# Maximum total characters for ALL file contents combined in a single prompt.
+# With ~4 chars/token, 80k chars ≈ 20k tokens, leaving room for prompt/tree/overhead.
+# This prevents rate limit errors (50k tokens/min) on APIs like Anthropic.
+MAX_TOTAL_CONTENT_CHARS = 80_000
+
+# Maximum characters for the file tree representation.
+# Large repos can have huge trees; we truncate to leave room for file contents.
+MAX_TREE_CHARS = 8_000
+
+# Maximum number of files to include content for in exploration phase.
+# Prioritizes higher-scoring files when this limit is exceeded.
+MAX_FILES_IN_PROMPT = 12
 
 
 class ScopeExplorationOutput(BaseModel):
@@ -135,8 +148,10 @@ class ScopedAnalyzer:
         examined_contents: Dict[str, str],
     ) -> ScopeExplorationOutput:
         """Ask LLM what additional files to examine."""
-        # Format file tree
+        # Format file tree (with truncation)
         tree_str = self._format_tree(file_tree)
+        if len(tree_str) > MAX_TREE_CHARS:
+            tree_str = tree_str[:MAX_TREE_CHARS] + "\n... (tree truncated)"
 
         # Format candidate files
         candidates_str = "\n".join(
@@ -144,11 +159,10 @@ class ScopedAnalyzer:
             for f in candidate_files
         )
 
-        # Format examined contents (truncated)
-        contents_str = ""
-        for path, content in examined_contents.items():
-            truncated = content[:MAX_FILE_CONTENT_CHARS]
-            contents_str += f"\n=== {path} ===\n{truncated}\n"
+        # Format examined contents with strict limits to prevent rate limit errors
+        contents_str = self._format_contents_with_limits(
+            examined_contents, candidate_files
+        )
 
         prompt = SCOPE_EXPLORATION_PROMPT.format(
             scope_question=question,
@@ -162,6 +176,71 @@ class ScopedAnalyzer:
             system="You are analyzing code to find files relevant to a specific question.",
             schema=ScopeExplorationOutput,
         )
+
+    def _format_contents_with_limits(
+        self,
+        examined_contents: Dict[str, str],
+        candidate_files: List[Dict],
+    ) -> str:
+        """Format file contents with strict size limits.
+
+        Prioritizes files by their discovery score and limits both per-file
+        and total content size to avoid exceeding API rate limits.
+
+        Args:
+            examined_contents: Dict mapping file paths to their contents
+            candidate_files: List of candidate file dicts with scores
+
+        Returns:
+            Formatted string with file contents, respecting size limits
+        """
+        # Build score lookup for prioritization
+        score_lookup = {f["path"]: f.get("score", 0) for f in candidate_files}
+
+        # Sort files by score (highest first), with examined-but-not-in-candidates last
+        sorted_paths = sorted(
+            examined_contents.keys(),
+            key=lambda p: score_lookup.get(p, -1),
+            reverse=True,
+        )
+
+        # Limit number of files
+        paths_to_include = sorted_paths[:MAX_FILES_IN_PROMPT]
+        omitted_count = len(sorted_paths) - len(paths_to_include)
+
+        # Build content string with total size limit
+        contents_parts = []
+        total_chars = 0
+
+        for path in paths_to_include:
+            content = examined_contents[path]
+
+            # Per-file truncation
+            if len(content) > MAX_FILE_CONTENT_CHARS:
+                content = content[:MAX_FILE_CONTENT_CHARS] + "\n... (file truncated)"
+
+            # Check if adding this file would exceed total limit
+            file_block = f"\n=== {path} ===\n{content}\n"
+            if total_chars + len(file_block) > MAX_TOTAL_CONTENT_CHARS:
+                # Truncate this file to fit remaining space
+                remaining = MAX_TOTAL_CONTENT_CHARS - total_chars - len(f"\n=== {path} ===\n") - 50
+                if remaining > 500:  # Only include if we can show something useful
+                    content = content[:remaining] + "\n... (truncated to fit)"
+                    file_block = f"\n=== {path} ===\n{content}\n"
+                    contents_parts.append(file_block)
+                # Stop adding more files
+                omitted_count += len(paths_to_include) - len(contents_parts)
+                break
+
+            contents_parts.append(file_block)
+            total_chars += len(file_block)
+
+        result = "".join(contents_parts)
+
+        if omitted_count > 0:
+            result += f"\n... ({omitted_count} additional files omitted to fit context limit)\n"
+
+        return result
 
     def _format_tree(self, tree: Dict[str, Any], indent: int = 0) -> str:
         """Format file tree as indented string."""

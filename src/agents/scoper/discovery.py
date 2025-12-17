@@ -74,7 +74,7 @@ SEARCHABLE_EXTENSIONS: Set[str] = {
 def search_relevant_files(
     repo_path: Path,
     keywords: List[str],
-    max_results: int = 50,
+    max_results: int = 20,
 ) -> List[Dict]:
     """Search for files relevant to the given keywords.
 

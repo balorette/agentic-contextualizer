@@ -10,7 +10,12 @@ from ..models import ScopedContextMetadata
 
 # Maximum number of characters from each file to include in the generation prompt.
 # Files exceeding this limit are truncated to prevent LLM context overflow.
-MAX_CONTENT_PER_FILE = 10_000
+MAX_CONTENT_PER_FILE = 15_000
+
+# Maximum total characters for all file contents combined.
+# With ~4 chars/token, 120k chars ≈ 30k tokens, leaving room for prompt overhead.
+# This prevents rate limit errors on APIs with per-request token limits.
+MAX_TOTAL_CONTENT_CHARS = 120_000
 
 
 class ScopedGenerator:
@@ -90,12 +95,41 @@ class ScopedGenerator:
         return output_path
 
     def _format_files(self, files: Dict[str, str]) -> str:
-        """Format file contents for prompt."""
+        """Format file contents for prompt with size limits.
+
+        Enforces both per-file and total content limits to prevent
+        exceeding API rate limits.
+        """
         parts = []
+        total_chars = 0
+        omitted_count = 0
+
         for path, content in files.items():
+            # Per-file truncation
             truncated = content[:MAX_CONTENT_PER_FILE]
-            parts.append(f"=== {path} ===\n{truncated}")
-        return "\n\n".join(parts)
+            if len(content) > MAX_CONTENT_PER_FILE:
+                truncated += "\n... (file truncated)"
+
+            file_block = f"=== {path} ===\n{truncated}"
+
+            # Check total limit
+            if total_chars + len(file_block) > MAX_TOTAL_CONTENT_CHARS:
+                remaining = MAX_TOTAL_CONTENT_CHARS - total_chars - len(f"=== {path} ===\n") - 50
+                if remaining > 500:
+                    truncated = content[:remaining] + "\n... (truncated to fit)"
+                    file_block = f"=== {path} ===\n{truncated}"
+                    parts.append(file_block)
+                omitted_count = len(files) - len(parts)
+                break
+
+            parts.append(file_block)
+            total_chars += len(file_block)
+
+        result = "\n\n".join(parts)
+        if omitted_count > 0:
+            result += f"\n\n... ({omitted_count} additional files omitted to fit context limit)"
+
+        return result
 
     def _sanitize_filename(self, question: str) -> str:
         """Convert question to safe, unique filename.

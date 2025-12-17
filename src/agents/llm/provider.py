@@ -5,6 +5,7 @@ from typing import Any, Optional, Type
 from pydantic import BaseModel
 from langchain_anthropic import ChatAnthropic
 from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.rate_limiters import InMemoryRateLimiter
 
 
 class LLMResponse(BaseModel):
@@ -34,7 +35,14 @@ class LLMProvider(ABC):
 
 class AnthropicProvider(LLMProvider):
     """Anthropic Claude LLM provider using LangChain."""
-
+    @staticmethod
+    def _rl() -> InMemoryRateLimiter:
+        return InMemoryRateLimiter(
+            requests_per_second=0.7,  # <-- Super slow! We can only make a request once every 10 seconds!!
+            check_every_n_seconds=0.1,  # Wake up every 100 ms to check whether allowed to make a request,
+            max_bucket_size=20,  # Controls the maximum burst size.
+        )
+    
     def __init__(self, model_name: str, api_key: str, max_retries: int = 3, timeout: int = 60):
         """Initialize the Anthropic provider.
 
@@ -48,9 +56,10 @@ class AnthropicProvider(LLMProvider):
         self.api_key = api_key
         self.max_retries = max_retries
         self.timeout = timeout
+        self.rate_limiter = self._rl()
 
         self.client = ChatAnthropic(
-            model=model_name, anthropic_api_key=api_key, max_retries=max_retries, timeout=timeout
+            model=model_name, anthropic_api_key=api_key, max_retries=max_retries, timeout=timeout, rate_limiter=self.rate_limiter
         )
 
     def generate(self, prompt: str, system: Optional[str] = None) -> LLMResponse:
