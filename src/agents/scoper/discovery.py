@@ -3,7 +3,7 @@
 import os
 import re
 from pathlib import Path
-from typing import List, Set, Dict
+from typing import List, Set, Dict, NamedTuple
 
 # Common English stopwords plus domain-specific terms to filter from keyword extraction.
 # Based on standard NLP stopword lists with additions for code-related queries
@@ -137,3 +137,130 @@ def search_relevant_files(
     # Sort by score descending, limit results
     results.sort(key=lambda x: x["score"], reverse=True)
     return results[:max_results]
+
+
+class LineMatchInfo(NamedTuple):
+    """Information about a line match."""
+
+    line_num: int
+    content: str
+
+
+def search_with_line_numbers(
+    repo_path: Path,
+    keywords: List[str],
+    max_results: int = 20,
+    max_lines_per_file: int = 5,
+) -> List[Dict]:
+    """Search for files and return specific line matches with line numbers.
+
+    Enhanced version of search_relevant_files that captures which lines
+    contain keyword matches for content matches.
+
+    Args:
+        repo_path: Path to repository root
+        keywords: List of keywords to search for
+        max_results: Maximum number of file results to return
+        max_lines_per_file: Maximum line matches to return per file
+
+    Returns:
+        List of dicts with: path, match_type, score, line_matches
+        where line_matches is list of {line_num, content}
+    """
+    results: List[Dict] = []
+    keyword_set = set(kw.lower() for kw in keywords)
+
+    for root, dirs, files in os.walk(repo_path):
+        # Prune ignored directories
+        dirs[:] = [
+            d for d in dirs if d not in IGNORED_DIRS and not d.endswith(".egg-info")
+        ]
+
+        root_path = Path(root)
+
+        for filename in files:
+            file_path = root_path / filename
+            rel_path = str(file_path.relative_to(repo_path))
+
+            # Check filename match
+            filename_lower = filename.lower()
+            name_matches = sum(1 for kw in keyword_set if kw in filename_lower)
+
+            # Check directory path match
+            path_lower = rel_path.lower()
+            path_matches = sum(1 for kw in keyword_set if kw in path_lower)
+
+            if name_matches > 0 or path_matches > 0:
+                results.append(
+                    {
+                        "path": rel_path,
+                        "match_type": "filename",
+                        "score": name_matches * 2 + path_matches,
+                        "line_matches": [],  # No line matches for filename matches
+                    }
+                )
+                continue
+
+            # Check content match for searchable files
+            suffix = file_path.suffix.lower()
+            if suffix in SEARCHABLE_EXTENSIONS:
+                try:
+                    if file_path.stat().st_size > 500_000:  # Skip large files
+                        continue
+                    content = file_path.read_text(encoding="utf-8", errors="ignore")
+                    content_lower = content.lower()
+
+                    content_matches = sum(1 for kw in keyword_set if kw in content_lower)
+                    if content_matches > 0:
+                        # Find specific line matches
+                        line_matches = _find_line_matches(
+                            content, keyword_set, max_lines_per_file
+                        )
+                        results.append(
+                            {
+                                "path": rel_path,
+                                "match_type": "content",
+                                "score": content_matches,
+                                "line_matches": line_matches,
+                            }
+                        )
+                except (OSError, UnicodeDecodeError):
+                    pass
+
+    # Sort by score descending, limit results
+    results.sort(key=lambda x: x["score"], reverse=True)
+    return results[:max_results]
+
+
+def _find_line_matches(
+    content: str,
+    keywords: Set[str],
+    max_lines: int,
+) -> List[Dict]:
+    """Find lines containing keyword matches.
+
+    Args:
+        content: File content
+        keywords: Set of lowercase keywords to find
+        max_lines: Maximum number of line matches to return
+
+    Returns:
+        List of dicts with line_num and content
+    """
+    matches: List[Dict] = []
+    lines = content.splitlines()
+
+    for i, line in enumerate(lines):
+        if len(matches) >= max_lines:
+            break
+
+        line_lower = line.lower()
+        if any(kw in line_lower for kw in keywords):
+            matches.append(
+                {
+                    "line_num": i + 1,  # 1-indexed
+                    "content": line.strip()[:200],  # Limit line length
+                }
+            )
+
+    return matches

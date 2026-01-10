@@ -9,6 +9,8 @@ from langchain_core.tools import tool
 from .backends import FileBackend, LocalFileBackend
 from .tools.file_tools import create_file_tools
 from .tools.analysis_tools import create_analysis_tools
+from .tools.code_search_tools import create_code_search_tools
+from .tools.schemas import CodeReference
 from .scoped_generator import ScopedGenerator
 from ..llm.provider import AnthropicProvider
 from ..config import Config
@@ -20,30 +22,41 @@ SCOPED_AGENT_SYSTEM_PROMPT = """You are a scoped context generator agent. Your g
 
 You have access to the following tools:
 
-1. **read_file** - Read file content from the repository
-2. **search_for_files** - Search for files by keywords (filename or content match)
-3. **extract_file_imports** - Parse imports from Python/JS/TS files to find related code
-4. **generate_scoped_context** - Generate the final scoped context markdown file
+### File Discovery
+1. **search_for_files** - Search for files by keywords (filename or content match)
+2. **grep_in_files** - Search for regex patterns with line numbers and context
+3. **find_code_definitions** - Find function, class, or method definitions by name
+
+### File Analysis
+4. **read_file** - Read file content from the repository
+5. **extract_file_imports** - Parse imports from Python/JS/TS files to find related code
+
+### Output Generation
+6. **generate_scoped_context** - Generate the final scoped context markdown file
 
 ## Workflow Strategy
 
 Follow this exploration strategy:
 
 ### Step 1: Search
-Use `search_for_files` with keywords from the scope question to find candidate files.
+- Use `search_for_files` with keywords from the scope question to find candidate files
+- Use `grep_in_files` to search for specific patterns and get line numbers
+- Use `find_code_definitions` to locate functions or classes by name
 
 ### Step 2: Read and Analyze
 - Read the top candidate files with `read_file`
 - Look for the code most relevant to the question
+- **Track important line numbers** as you read
 - Use `extract_file_imports` to find related files
 
 ### Step 3: Follow Dependencies
 - Read imported files that seem relevant
 - Look for test files (they often explain behavior)
 - Check configuration files if relevant
+- Use grep to find usages of key functions
 
 ### Step 4: Generate
-When you have sufficient context (typically 5-15 relevant files), use `generate_scoped_context` to produce the final documentation.
+When you have sufficient context (typically 5-15 relevant files), use `generate_scoped_context` to produce the final documentation. **Include code references** with specific line numbers.
 
 ## Guidelines
 
@@ -51,20 +64,24 @@ When you have sufficient context (typically 5-15 relevant files), use `generate_
 - **Focus**: Stay on topic - don't explore tangential code
 - **Tests**: Test files are valuable - they show expected behavior
 - **Imports**: Following imports reveals architecture
+- **Line Numbers**: Track and report specific line numbers for key code
 - **Confidence**: Generate output when you can answer the question, not when you've read everything
 
 ## Output Format
 
 The final scoped context should answer the user's question with:
 - A clear summary
-- Relevant code locations
+- Relevant code locations with **specific line numbers** (e.g., `src/auth.py:45-78`)
 - Key files to examine
 - Usage examples if available
+- A Code References section listing important file:line locations
 
 ## Important Notes
 
 - Don't read files you've already read
 - Prioritize files that directly address the question
+- Use grep to quickly find specific patterns instead of reading entire files
+- Track line numbers for important code you discover
 - If the question is ambiguous, make reasonable assumptions
 - Report what you found even if it's incomplete
 """
@@ -113,9 +130,10 @@ def create_scoped_agent(
     # Initialize chat model
     model = init_chat_model(model_name)
 
-    # Create file and analysis tools bound to backend
+    # Create file, analysis, and code search tools bound to backend
     file_tools = create_file_tools(backend)
     analysis_tools = create_analysis_tools(backend)
+    code_search_tools = create_code_search_tools(backend)
 
     # Create the generation tool (needs LLM and output config)
     config = Config.from_env()
@@ -127,6 +145,7 @@ def create_scoped_agent(
         question: str,
         relevant_files: dict[str, str],
         insights: str,
+        code_references: list[dict] | None = None,
     ) -> dict:
         """Generate the final scoped context markdown file.
 
@@ -137,6 +156,11 @@ def create_scoped_agent(
             question: The original scope question being answered
             relevant_files: Dictionary mapping file paths to their content
             insights: Your analysis and insights about the code
+            code_references: Optional list of code reference dicts with keys:
+                - path: File path
+                - line_start: Starting line number
+                - line_end: Optional ending line number
+                - description: Brief description of what this code does
 
         Returns:
             Dictionary with:
@@ -144,6 +168,19 @@ def create_scoped_agent(
             - error: Error message if generation failed
         """
         try:
+            # Convert code reference dicts to CodeReference objects
+            refs = None
+            if code_references:
+                refs = [
+                    CodeReference(
+                        path=ref["path"],
+                        line_start=ref["line_start"],
+                        line_end=ref.get("line_end"),
+                        description=ref["description"],
+                    )
+                    for ref in code_references
+                ]
+
             output_path = generator.generate(
                 repo_name=repo_path.name,
                 question=question,
@@ -151,6 +188,7 @@ def create_scoped_agent(
                 insights=insights,
                 model_name=config.model_name,
                 source_repo=str(repo_path),
+                code_references=refs,
             )
             return {
                 "output_path": str(output_path),
@@ -163,7 +201,7 @@ def create_scoped_agent(
             }
 
     # Combine all tools
-    tools = file_tools + analysis_tools + [generate_scoped_context]
+    tools = file_tools + analysis_tools + code_search_tools + [generate_scoped_context]
 
     # Create agent
     agent = create_agent(

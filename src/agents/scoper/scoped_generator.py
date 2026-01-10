@@ -3,10 +3,11 @@
 import re
 import yaml
 from pathlib import Path
-from typing import Dict
+from typing import Dict, List
 from ..llm.provider import LLMProvider
 from ..llm.prompts import SCOPE_GENERATION_PROMPT
 from ..models import ScopedContextMetadata
+from .tools.schemas import CodeReference
 
 # Maximum number of characters from each file to include in the generation prompt.
 # Files exceeding this limit are truncated to prevent LLM context overflow.
@@ -41,6 +42,7 @@ class ScopedGenerator:
         source_repo: str | None = None,
         source_context: str | None = None,
         output_path: Path | None = None,
+        code_references: List[CodeReference] | None = None,
     ) -> Path:
         """Generate scoped context file.
 
@@ -53,6 +55,7 @@ class ScopedGenerator:
             source_repo: Path to source repository
             source_context: Path to source context file (if scoping from context)
             output_path: Optional custom output path
+            code_references: Optional list of CodeReference objects for the output
 
         Returns:
             Path to generated scoped context file
@@ -82,7 +85,9 @@ class ScopedGenerator:
         )
 
         # Build full content
-        full_content = self._build_context_file(metadata, response.content)
+        full_content = self._build_context_file(
+            metadata, response.content, code_references
+        )
 
         # Determine output path
         if output_path is None:
@@ -146,8 +151,37 @@ class ScopedGenerator:
         timestamp = datetime.now().strftime("%H%M%S")
         return f"{base_name}-{timestamp}"
 
-    def _build_context_file(self, metadata: ScopedContextMetadata, content: str) -> str:
-        """Build final context file with frontmatter."""
+    def _format_code_references(
+        self, references: List[CodeReference] | None
+    ) -> str:
+        """Format code references as markdown section.
+
+        Args:
+            references: List of CodeReference objects
+
+        Returns:
+            Formatted markdown section, or empty string if no references
+        """
+        if not references:
+            return ""
+
+        lines = ["", "## Code References", ""]
+        for ref in references:
+            if ref.line_end and ref.line_end != ref.line_start:
+                line_range = f"{ref.line_start}-{ref.line_end}"
+            else:
+                line_range = str(ref.line_start)
+            lines.append(f"- `{ref.path}:{line_range}` - {ref.description}")
+
+        return "\n".join(lines)
+
+    def _build_context_file(
+        self,
+        metadata: ScopedContextMetadata,
+        content: str,
+        code_references: List[CodeReference] | None = None,
+    ) -> str:
+        """Build final context file with frontmatter and code references."""
         frontmatter_dict = {
             "source_repo": metadata.source_repo,
             "scope_question": metadata.scope_question,
@@ -160,4 +194,11 @@ class ScopedGenerator:
             frontmatter_dict["source_context"] = metadata.source_context
 
         frontmatter = yaml.dump(frontmatter_dict, default_flow_style=False)
-        return f"---\n{frontmatter}---\n\n{content.strip()}\n"
+
+        # Build final content with optional code references section
+        final_content = content.strip()
+        references_section = self._format_code_references(code_references)
+        if references_section:
+            final_content += references_section
+
+        return f"---\n{frontmatter}---\n\n{final_content}\n"
