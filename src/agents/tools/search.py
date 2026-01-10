@@ -1,4 +1,4 @@
-"""Code search tools for scoped context generation.
+"""Code search tools using the FileBackend abstraction.
 
 Provides grep-like pattern search and code definition finding capabilities.
 """
@@ -9,14 +9,18 @@ import re
 from pathlib import Path, PurePosixPath
 from langchain_core.tools import tool, BaseTool
 
-from ..backends import FileBackend
-from ..discovery import IGNORED_DIRS, SEARCHABLE_EXTENSIONS
+from .backends import FileBackend, DEFAULT_IGNORED_DIRS, DEFAULT_SEARCHABLE_EXTENSIONS
 from .schemas import (
     GrepOutput,
     GrepMatch,
     FindDefinitionsOutput,
     DefinitionMatch,
 )
+
+
+# =============================================================================
+# Core Functions (Backend-aware)
+# =============================================================================
 
 
 def grep_pattern(
@@ -58,7 +62,7 @@ def grep_pattern(
         files_to_search = [path]
     else:
         # Search all files in repo
-        files_to_search = _get_searchable_files(backend.repo_path)
+        files_to_search = list(_get_searchable_files(backend.repo_path))
 
     for file_path in files_to_search:
         if len(matches) >= max_results:
@@ -118,14 +122,14 @@ def _get_searchable_files(repo_path: str | Path) -> list[str]:
     for root, dirs, filenames in os.walk(repo_path):
         # Prune ignored directories
         dirs[:] = [
-            d for d in dirs if d not in IGNORED_DIRS and not d.endswith(".egg-info")
+            d for d in dirs if d not in DEFAULT_IGNORED_DIRS and not d.endswith(".egg-info")
         ]
 
         for filename in filenames:
             file_path = Path(root) / filename
             suffix = file_path.suffix.lower()
 
-            if suffix in SEARCHABLE_EXTENSIONS:
+            if suffix in DEFAULT_SEARCHABLE_EXTENSIONS:
                 # Skip large files
                 try:
                     if file_path.stat().st_size > 500_000:
@@ -404,7 +408,12 @@ def _find_js_definition_end(lines: list[str], start_idx: int) -> int | None:
     return None
 
 
-def create_code_search_tools(backend: FileBackend) -> list[BaseTool]:
+# =============================================================================
+# LangChain Tool Factory
+# =============================================================================
+
+
+def create_search_tools(backend: FileBackend) -> list[BaseTool]:
     """Create code search tools bound to a specific backend.
 
     Args:

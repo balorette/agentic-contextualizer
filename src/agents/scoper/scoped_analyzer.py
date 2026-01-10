@@ -5,8 +5,7 @@ from typing import Dict, List, Any, Optional
 from pydantic import BaseModel, Field
 from ..llm.provider import LLMProvider
 from ..llm.prompts import SCOPE_EXPLORATION_PROMPT
-from .backends import FileBackend, LocalFileBackend
-from .tools.schemas import CodeReference
+from ..tools import FileBackend, LocalFileBackend, CodeReference
 
 # Maximum number of LLM-guided exploration rounds before forcing synthesis.
 # This limits cost and latency by preventing excessive iterations.

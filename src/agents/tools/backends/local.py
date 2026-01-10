@@ -1,4 +1,4 @@
-"""Local filesystem backend for scoped context generation."""
+"""Local filesystem backend for repository file access."""
 
 import os
 from pathlib import Path

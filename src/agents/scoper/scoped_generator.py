@@ -7,7 +7,7 @@ from typing import Dict, List
 from ..llm.provider import LLMProvider
 from ..llm.prompts import SCOPE_GENERATION_PROMPT
 from ..models import ScopedContextMetadata
-from .tools.schemas import CodeReference
+from ..tools import CodeReference
 
 # Maximum number of characters from each file to include in the generation prompt.
 # Files exceeding this limit are truncated to prevent LLM context overflow.

@@ -475,6 +475,7 @@ def _scope_pipeline_mode(
         source_repo=str(repo_path),
         source_context=source_context,
         output_path=output_path,
+        code_references=analysis_result.get("code_references"),
     )
 
     click.echo(f"\n✅ Scoped context generated: {result_path}")

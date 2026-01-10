@@ -6,11 +6,14 @@ from langchain.agents import create_agent
 from langchain.chat_models import init_chat_model
 from langchain_core.tools import tool
 
-from .backends import FileBackend, LocalFileBackend
-from .tools.file_tools import create_file_tools
-from .tools.analysis_tools import create_analysis_tools
-from .tools.code_search_tools import create_code_search_tools
-from .tools.schemas import CodeReference
+from ..tools import (
+    FileBackend,
+    LocalFileBackend,
+    CodeReference,
+    create_file_tools,
+    create_analysis_tools,
+    create_search_tools,
+)
 from .scoped_generator import ScopedGenerator
 from ..llm.provider import AnthropicProvider
 from ..config import Config
@@ -133,7 +136,7 @@ def create_scoped_agent(
     # Create file, analysis, and code search tools bound to backend
     file_tools = create_file_tools(backend)
     analysis_tools = create_analysis_tools(backend)
-    code_search_tools = create_code_search_tools(backend)
+    code_search_tools = create_search_tools(backend)
 
     # Create the generation tool (needs LLM and output config)
     config = Config.from_env()
