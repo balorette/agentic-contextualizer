@@ -72,16 +72,27 @@ Your task:
 1. Review the candidate files and their contents
 2. Identify what additional files should be examined (imports, related tests, configs)
 3. Determine if you have enough context to answer the scope question
+4. Note important line numbers/ranges for key code locations
+
+When examining files, track important line numbers for:
+- Key function or class definitions relevant to the question
+- Important logic, algorithms, or configuration
+- Entry points and initialization code
+- Error handling and edge cases
 
 Respond with JSON:
 {{
     "additional_files_needed": ["path/to/file1.py", "path/to/file2.py"],
     "reasoning": "Why these files are needed",
     "sufficient_context": true/false,
-    "preliminary_insights": "What you've learned so far"
+    "preliminary_insights": "What you've learned so far. Include notable file:line references like 'the main logic is in src/auth.py:45-78'",
+    "key_locations": [
+        {{"path": "path/to/file.py", "line_start": 45, "line_end": 78, "description": "Main authentication flow"}}
+    ]
 }}
 
 If sufficient_context is true, additional_files_needed should be empty.
+The key_locations array should contain the most important code locations discovered so far.
 """
 
 
@@ -100,9 +111,14 @@ Create a markdown document with:
 1. Summary - Direct answer to the scope question
 2. Relevant sections based on what's important for this specific topic
    (could be API endpoints, data models, processing logic, etc. - use your judgment)
-3. Key Files - List of files the reader should examine
+3. Key Files - List of files the reader should examine with specific line references
 4. Usage Examples / Related Tests - If available, show how this functionality is used
+
+When referencing code locations, use the format `path/to/file.py:line` or `path/to/file.py:start-end`.
 
 Be concise but thorough. Focus only on information relevant to the scope question.
 Do NOT include a generic structure - tailor sections to what matters for this topic.
+
+IMPORTANT: In the "Key Files" section, include specific line numbers where relevant code is located.
+Format references as: `path/to/file.py:45-78` - Brief description of what this code does.
 """

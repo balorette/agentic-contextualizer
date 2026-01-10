@@ -68,11 +68,13 @@ class TestCreateScopedAgent:
         call_kwargs = mock_create_agent.call_args[1]
         tools = call_kwargs["tools"]
 
-        # Should have: read_file, search_for_files, extract_file_imports, generate_scoped_context
+        # Should have: file tools, analysis tools, code search tools, and generate_scoped_context
         tool_names = [t.name for t in tools]
         assert "read_file" in tool_names
         assert "search_for_files" in tool_names
         assert "extract_file_imports" in tool_names
+        assert "grep_in_files" in tool_names
+        assert "find_code_definitions" in tool_names
         assert "generate_scoped_context" in tool_names
 
     def test_uses_custom_backend(
@@ -85,7 +87,7 @@ class TestCreateScopedAgent:
     ):
         """Test that factory uses provided backend."""
         from src.agents.scoper.agent import create_scoped_agent
-        from src.agents.scoper.backends import InMemoryFileBackend
+        from src.agents.tools import InMemoryFileBackend
 
         custom_backend = InMemoryFileBackend(files={"test.py": "content"})
 
@@ -219,6 +221,8 @@ class TestScopedAgentSystemPrompt:
         assert "read_file" in SCOPED_AGENT_SYSTEM_PROMPT
         assert "search_for_files" in SCOPED_AGENT_SYSTEM_PROMPT
         assert "extract_file_imports" in SCOPED_AGENT_SYSTEM_PROMPT
+        assert "grep_in_files" in SCOPED_AGENT_SYSTEM_PROMPT
+        assert "find_code_definitions" in SCOPED_AGENT_SYSTEM_PROMPT
         assert "generate_scoped_context" in SCOPED_AGENT_SYSTEM_PROMPT
 
     def test_prompt_includes_workflow(self):

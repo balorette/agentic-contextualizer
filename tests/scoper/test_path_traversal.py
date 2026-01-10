@@ -1,7 +1,7 @@
 """Tests for path traversal protection in file backends."""
 
 import pytest
-from src.agents.scoper.backends import LocalFileBackend
+from src.agents.tools import LocalFileBackend
 
 
 class TestLocalFileBackendPathTraversal:

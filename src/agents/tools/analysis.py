@@ -1,12 +1,86 @@
-"""Code analysis tools for scoped context generation."""
+"""Code analysis tools using the FileBackend abstraction.
+
+Provides tools for extracting code structure information like imports.
+"""
 
 import ast
 import re
 from pathlib import PurePosixPath
 from langchain_core.tools import tool, BaseTool
 
-from ..backends import FileBackend
+from .backends import FileBackend
 from .schemas import ExtractImportsOutput, ImportInfo
+
+
+# =============================================================================
+# Core Functions (Backend-aware)
+# =============================================================================
+
+
+def extract_imports(
+    backend: FileBackend,
+    file_path: str,
+) -> ExtractImportsOutput:
+    """Extract import statements from a source file.
+
+    Args:
+        backend: File backend to use
+        file_path: Relative path to file
+
+    Returns:
+        ExtractImportsOutput with imports and metadata
+    """
+    content = backend.read_file(file_path)
+
+    if content is None:
+        return ExtractImportsOutput(
+            imports=[],
+            path=file_path,
+            language="unknown",
+            error=f"Could not read file: {file_path}",
+        )
+
+    language = _detect_language(file_path)
+
+    if language == "python":
+        imports = _parse_python_imports(content, file_path)
+    elif language in ("javascript", "typescript"):
+        imports = _parse_js_imports(content)
+    else:
+        return ExtractImportsOutput(
+            imports=[],
+            path=file_path,
+            language=language,
+            error=f"Import extraction not supported for language: {language}",
+        )
+
+    return ExtractImportsOutput(
+        imports=imports,
+        path=file_path,
+        language=language,
+        error=None,
+    )
+
+
+def _detect_language(file_path: str) -> str:
+    """Detect language from file extension.
+
+    Args:
+        file_path: Path to file
+
+    Returns:
+        Language identifier: 'python', 'javascript', 'typescript', 'unknown'
+    """
+    suffix = PurePosixPath(file_path).suffix.lower()
+
+    if suffix == ".py":
+        return "python"
+    elif suffix in (".js", ".jsx", ".mjs", ".cjs"):
+        return "javascript"
+    elif suffix in (".ts", ".tsx", ".mts", ".cts"):
+        return "typescript"
+    else:
+        return "unknown"
 
 
 def _parse_python_imports(content: str, file_path: str) -> list[ImportInfo]:
@@ -127,8 +201,8 @@ def _parse_js_imports(content: str) -> list[ImportInfo]:
     for match in re.finditer(es6_pattern, content):
         default_import, named_imports, namespace_import, module = match.groups()
 
-        names = []
-        alias = None
+        names: list[str] = []
+        alias: str | None = None
 
         if default_import:
             alias = default_import
@@ -188,70 +262,9 @@ def _resolve_js_import(module: str) -> str | None:
     return f"{path}.ts"  # Default to .ts, could be .js
 
 
-def _detect_language(file_path: str) -> str:
-    """Detect language from file extension.
-
-    Args:
-        file_path: Path to file
-
-    Returns:
-        Language identifier: 'python', 'javascript', 'typescript', 'unknown'
-    """
-    suffix = PurePosixPath(file_path).suffix.lower()
-
-    if suffix == ".py":
-        return "python"
-    elif suffix in (".js", ".jsx", ".mjs", ".cjs"):
-        return "javascript"
-    elif suffix in (".ts", ".tsx", ".mts", ".cts"):
-        return "typescript"
-    else:
-        return "unknown"
-
-
-def extract_imports(
-    backend: FileBackend,
-    file_path: str,
-) -> ExtractImportsOutput:
-    """Extract import statements from a source file.
-
-    Args:
-        backend: File backend to use
-        file_path: Relative path to file
-
-    Returns:
-        ExtractImportsOutput with imports and metadata
-    """
-    content = backend.read_file(file_path)
-
-    if content is None:
-        return ExtractImportsOutput(
-            imports=[],
-            path=file_path,
-            language="unknown",
-            error=f"Could not read file: {file_path}",
-        )
-
-    language = _detect_language(file_path)
-
-    if language == "python":
-        imports = _parse_python_imports(content, file_path)
-    elif language in ("javascript", "typescript"):
-        imports = _parse_js_imports(content)
-    else:
-        return ExtractImportsOutput(
-            imports=[],
-            path=file_path,
-            language=language,
-            error=f"Import extraction not supported for language: {language}",
-        )
-
-    return ExtractImportsOutput(
-        imports=imports,
-        path=file_path,
-        language=language,
-        error=None,
-    )
+# =============================================================================
+# LangChain Tool Factory
+# =============================================================================
 
 
 def create_analysis_tools(backend: FileBackend) -> list[BaseTool]:
