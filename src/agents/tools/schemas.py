@@ -110,7 +110,7 @@ class GrepOutput(BaseModel):
     """Output schema for grep_pattern tool."""
 
     matches: list[GrepMatch] = Field(description="List of matches with location info")
-    total_matches: int = Field(description="Total matches found")
+    total_matches: int = Field(description="Total matches found (approximate; files are skipped once max_results is reached)")
     pattern: str = Field(description="Pattern that was searched")
     files_searched: int = Field(default=0, description="Number of files searched")
     error: str | None = Field(default=None, description="Error message if search failed")

@@ -4,9 +4,8 @@ Provides grep-like pattern search and code definition finding capabilities.
 """
 
 import ast
-import os
 import re
-from pathlib import Path, PurePosixPath
+from pathlib import PurePosixPath
 from langchain_core.tools import tool, BaseTool
 
 from .backends import FileBackend, DEFAULT_IGNORED_DIRS, DEFAULT_SEARCHABLE_EXTENSIONS
@@ -40,7 +39,10 @@ def grep_pattern(
         context_lines: Number of context lines before/after each match
 
     Returns:
-        GrepOutput with matches and metadata
+        GrepOutput with matches and metadata.
+        Note: total_matches counts all matches in files that were searched,
+        but files are skipped once max_results is reached, so the count
+        may underrepresent the true total across the entire repository.
     """
     try:
         regex = re.compile(pattern, re.IGNORECASE)
@@ -61,8 +63,11 @@ def grep_pattern(
         # Search specific file
         files_to_search = [path]
     else:
-        # Search all files in repo
-        files_to_search = list(_get_searchable_files(backend.repo_path))
+        # Search all searchable files via backend abstraction
+        files_to_search = [
+            f for f in backend.walk_files(ignore_dirs=DEFAULT_IGNORED_DIRS)
+            if PurePosixPath(f).suffix.lower() in DEFAULT_SEARCHABLE_EXTENSIONS
+        ]
 
     for file_path in files_to_search:
         if len(matches) >= max_results:
@@ -107,42 +112,6 @@ def grep_pattern(
     )
 
 
-def _get_searchable_files(repo_path: str | Path) -> list[str]:
-    """Get list of searchable files in repository.
-
-    Args:
-        repo_path: Path to repository root
-
-    Returns:
-        List of relative file paths
-    """
-    repo_path = Path(repo_path)
-    files = []
-
-    for root, dirs, filenames in os.walk(repo_path):
-        # Prune ignored directories
-        dirs[:] = [
-            d for d in dirs if d not in DEFAULT_IGNORED_DIRS and not d.endswith(".egg-info")
-        ]
-
-        for filename in filenames:
-            file_path = Path(root) / filename
-            suffix = file_path.suffix.lower()
-
-            if suffix in DEFAULT_SEARCHABLE_EXTENSIONS:
-                # Skip large files
-                try:
-                    if file_path.stat().st_size > 500_000:
-                        continue
-                except OSError:
-                    continue
-
-                rel_path = str(file_path.relative_to(repo_path))
-                files.append(rel_path)
-
-    return files
-
-
 def find_definitions(
     backend: FileBackend,
     name: str,
@@ -161,7 +130,10 @@ def find_definitions(
     definitions: list[DefinitionMatch] = []
     files_searched = 0
 
-    files_to_search = _get_searchable_files(backend.repo_path)
+    files_to_search = [
+        f for f in backend.walk_files(ignore_dirs=DEFAULT_IGNORED_DIRS)
+        if PurePosixPath(f).suffix.lower() in DEFAULT_SEARCHABLE_EXTENSIONS
+    ]
 
     for file_path in files_to_search:
         content = backend.read_file(file_path)
@@ -394,7 +366,6 @@ def _find_js_definition_end(lines: list[str], start_idx: int) -> int | None:
     for typical formatted source files.
     """
     brace_count = 0
-    paren_count = 0
     started = False
 
     for i in range(start_idx, min(start_idx + 500, len(lines))):
@@ -406,10 +377,6 @@ def _find_js_definition_end(lines: list[str], start_idx: int) -> int | None:
                 started = True
             elif char == "}":
                 brace_count -= 1
-            elif char == "(":
-                paren_count += 1
-            elif char == ")":
-                paren_count -= 1
 
         # Definition ends when we've seen braces and they're balanced
         if started and brace_count == 0:

@@ -1,6 +1,5 @@
 """Tests for code search tools (grep_pattern, find_definitions)."""
 
-import pytest
 from src.agents.tools import InMemoryFileBackend, LocalFileBackend
 from src.agents.tools.search import (
     grep_pattern,
@@ -133,6 +132,30 @@ class TestGrepPattern:
         result = grep_pattern(backend, "content")
 
         assert result.files_searched == 2
+
+    def test_works_with_in_memory_backend(self):
+        """Test that grep works with InMemoryFileBackend (not just local fs)."""
+        backend = InMemoryFileBackend(files={
+            "src/main.py": "def hello():\n    print('world')\n",
+            "src/utils.py": "def goodbye():\n    print('world')\n",
+        })
+        result = grep_pattern(backend, "world")
+
+        assert result.error is None
+        assert result.total_matches == 2
+        assert result.files_searched == 2
+
+    def test_in_memory_backend_skips_non_searchable_extensions(self):
+        """Test that non-code extensions are skipped with InMemoryFileBackend."""
+        backend = InMemoryFileBackend(files={
+            "image.png": "not searchable",
+            "code.py": "searchable match",
+        })
+        result = grep_pattern(backend, "match")
+
+        # .png is not in DEFAULT_SEARCHABLE_EXTENSIONS
+        assert result.total_matches == 1
+        assert result.matches[0].path == "code.py"
 
 
 # =============================================================================
@@ -416,6 +439,19 @@ class TestFindDefinitions:
 
         assert result.error is None
         assert result.definitions == []
+
+    def test_works_with_in_memory_backend(self):
+        """Test that find_definitions works with InMemoryFileBackend."""
+        backend = InMemoryFileBackend(files={
+            "models.py": "class User:\n    def save(self): pass\n",
+            "views.js": "function getUser() {\n  return {};\n}\n",
+        })
+        result = find_definitions(backend, "user")
+
+        assert result.error is None
+        names = {d.name for d in result.definitions}
+        assert "User" in names
+        assert "getUser" in names
 
 
 # =============================================================================
