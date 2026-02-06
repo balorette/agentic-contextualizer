@@ -214,6 +214,7 @@ def _find_python_definitions(
         return matches
 
     lines = content.splitlines()
+    method_ids = _build_method_set(tree)
 
     for node in ast.walk(tree):
         if isinstance(node, ast.FunctionDef) or isinstance(node, ast.AsyncFunctionDef):
@@ -221,8 +222,7 @@ def _find_python_definitions(
                 continue
 
             # Check if it's a method (inside a class)
-            is_method = _is_method(tree, node)
-            node_type = "method" if is_method else "function"
+            node_type = "method" if id(node) in method_ids else "function"
 
             if def_type and def_type != node_type:
                 continue
@@ -260,14 +260,19 @@ def _find_python_definitions(
     return matches
 
 
-def _is_method(tree: ast.AST, func_node: ast.FunctionDef) -> bool:
-    """Check if a function definition is a method (inside a class)."""
+def _build_method_set(tree: ast.AST) -> set[int]:
+    """Build set of node ids that are methods (direct children of classes).
+
+    Walking the tree once and collecting ids is O(n) rather than
+    O(n*m) when calling _is_method per function node.
+    """
+    method_ids: set[int] = set()
     for node in ast.walk(tree):
         if isinstance(node, ast.ClassDef):
             for child in ast.iter_child_nodes(node):
-                if child is func_node:
-                    return True
-    return False
+                if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    method_ids.add(id(child))
+    return method_ids
 
 
 def _extract_python_signature(
@@ -284,7 +289,7 @@ def _extract_python_signature(
             try:
                 arg_str += f": {ast.unparse(arg.annotation)}"
             except (AttributeError, ValueError):
-                pass
+                pass  # ast.unparse can fail on malformed AST nodes; omit annotation
         args.append(arg_str)
 
     signature = f"{prefix}{node.name}({', '.join(args)})"
@@ -294,7 +299,7 @@ def _extract_python_signature(
         try:
             signature += f" -> {ast.unparse(node.returns)}"
         except (AttributeError, ValueError):
-            pass
+            pass  # ast.unparse can fail on malformed AST nodes; omit return type
 
     return signature
 
@@ -331,7 +336,7 @@ def _find_js_definitions(
         (rf"^(\s*)(?:export\s+)?class\s+(\w*{name_pattern}\w*)", "class"),
         # arrow functions: const name = (...) => or const name = async (...) =>
         (
-            rf"^(\s*)(?:export\s+)?(?:const|let|var)\s+(\w*{name_pattern}\w*)\s*=\s*(?:async\s*)?\(",
+            rf"^(\s*)(?:export\s+)?(?:const|let|var)\s+(\w*{name_pattern}\w*)\s*=\s*(?:async\s*)?\([^)]*\)\s*=>",
             "function",
         ),
         # arrow functions without parens: const name = x =>
@@ -382,6 +387,11 @@ def _find_js_definition_end(lines: list[str], start_idx: int) -> int | None:
     """Find the end line of a JS definition by tracking braces.
 
     Simple heuristic that works for most formatted code.
+
+    Known limitation: brace counting does not account for braces inside
+    string literals, template literals, or comments. A full JS parser
+    would be needed for correctness, but this heuristic is sufficient
+    for typical formatted source files.
     """
     brace_count = 0
     paren_count = 0

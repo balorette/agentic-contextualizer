@@ -3,7 +3,7 @@
 import os
 import re
 from pathlib import Path
-from typing import List, Set, Dict, NamedTuple
+from typing import List, Set, Dict
 
 # Common English stopwords plus domain-specific terms to filter from keyword extraction.
 # Based on standard NLP stopword lists with additions for code-related queries
@@ -139,13 +139,6 @@ def search_relevant_files(
     return results[:max_results]
 
 
-class LineMatchInfo(NamedTuple):
-    """Information about a line match."""
-
-    line_num: int
-    content: str
-
-
 def search_with_line_numbers(
     repo_path: Path,
     keywords: List[str],
@@ -225,6 +218,8 @@ def search_with_line_numbers(
                             }
                         )
                 except (OSError, UnicodeDecodeError):
+                    # Skip files that can't be read (permissions, encoding);
+                    # non-critical for search — we simply exclude them from results
                     pass
 
     # Sort by score descending, limit results

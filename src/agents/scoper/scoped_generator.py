@@ -199,6 +199,8 @@ class ScopedGenerator:
         final_content = content.strip()
         references_section = self._format_code_references(code_references)
         if references_section:
+            if not final_content.endswith("\n"):
+                final_content += "\n"
             final_content += references_section
 
         return f"---\n{frontmatter}---\n\n{final_content}\n"
