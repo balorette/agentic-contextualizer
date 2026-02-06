@@ -116,13 +116,15 @@ def find_definitions(
     backend: FileBackend,
     name: str,
     def_type: str | None = None,
+    max_results: int = 50,
 ) -> FindDefinitionsOutput:
     """Find code definitions by name across the repository.
 
     Args:
         backend: File backend to use
         name: Name to search for (partial match supported)
-        def_type: Optional filter: "function", "class", "method", or None for all
+        def_type: Optional filter: "function", "class", "method", "variable", or None for all
+        max_results: Maximum number of definitions to return
 
     Returns:
         FindDefinitionsOutput with matching definitions
@@ -136,6 +138,9 @@ def find_definitions(
     ]
 
     for file_path in files_to_search:
+        if len(definitions) >= max_results:
+            break
+
         content = backend.read_file(file_path)
         if content is None:
             continue
@@ -151,6 +156,9 @@ def find_definitions(
             continue
 
         definitions.extend(file_defs)
+
+    # Trim to max_results (a single file may have pushed us over)
+    definitions = definitions[:max_results]
 
     return FindDefinitionsOutput(
         definitions=definitions,
@@ -427,15 +435,18 @@ def create_search_tools(backend: FileBackend) -> list[BaseTool]:
         return result.model_dump()
 
     @tool
-    def find_code_definitions(name: str, def_type: str | None = None) -> dict:
-        """Find function, class, or method definitions by name.
+    def find_code_definitions(
+        name: str, def_type: str | None = None, max_results: int = 50
+    ) -> dict:
+        """Find function, class, method, or variable definitions by name.
 
         Searches Python and JavaScript/TypeScript files for definitions
         matching the given name. Supports partial matching.
 
         Args:
             name: Name to search for (partial match, case-insensitive)
-            def_type: Optional filter: "function", "class", "method", or None for all
+            def_type: Optional filter: "function", "class", "method", "variable", or None for all
+            max_results: Maximum definitions to return (default: 50)
 
         Returns:
             Dictionary with:
@@ -444,7 +455,7 @@ def create_search_tools(backend: FileBackend) -> list[BaseTool]:
             - files_searched: Number of files searched
             - error: Error message if search failed
         """
-        result = find_definitions(backend, name, def_type)
+        result = find_definitions(backend, name, def_type, max_results)
         return result.model_dump()
 
     return [grep_in_files, find_code_definitions]

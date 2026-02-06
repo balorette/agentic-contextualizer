@@ -453,6 +453,17 @@ class TestFindDefinitions:
         assert "User" in names
         assert "getUser" in names
 
+    def test_max_results_limits_output(self):
+        """Test that max_results limits the returned definitions."""
+        # Create many matching definitions
+        lines = [f"def get_{i}(): pass" for i in range(20)]
+        backend = InMemoryFileBackend(files={
+            "funcs.py": "\n".join(lines),
+        })
+        result = find_definitions(backend, "get", max_results=5)
+
+        assert len(result.definitions) == 5
+
 
 # =============================================================================
 # create_search_tools tests

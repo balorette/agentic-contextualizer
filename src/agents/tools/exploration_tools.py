@@ -4,43 +4,7 @@ from pathlib import Path
 from typing import Any
 from langchain_core.tools import tool
 
-
-# Key file patterns to identify important files
-KEY_FILE_PATTERNS = {
-    "configs": [
-        "package.json",
-        "pyproject.toml",
-        "setup.py",
-        "Cargo.toml",
-        "go.mod",
-        "pom.xml",
-        "build.gradle",
-        "composer.json",
-        ".env.example",
-        "tsconfig.json",
-        "webpack.config.js",
-        "vite.config.js",
-    ],
-    "entry_points": [
-        "main.py",
-        "__main__.py",
-        "index.js",
-        "index.ts",
-        "main.go",
-        "main.rs",
-        "app.py",
-        "server.py",
-        "cli.py",
-    ],
-    "docs": [
-        "README.md",
-        "CONTRIBUTING.md",
-        "CHANGELOG.md",
-        "LICENSE",
-        "CLAUDE.md",
-        "docs/index.md",
-    ],
-}
+from .file import KEY_FILE_PATTERNS
 
 
 @tool

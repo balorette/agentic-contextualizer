@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 from langchain_core.tools import tool, BaseTool
 
-from .backends import FileBackend
+from .backends import FileBackend, DEFAULT_IGNORED_DIRS
 from .schemas import ReadFileOutput, SearchFilesOutput, FileMatch
 
 # Default maximum characters to return from a file
@@ -115,7 +115,7 @@ def search_files(
         results: list[dict] = []
         keyword_set = set(kw.lower() for kw in keywords)
 
-        for rel_path in backend.walk_files():
+        for rel_path in backend.walk_files(ignore_dirs=DEFAULT_IGNORED_DIRS):
             if len(results) >= max_results:
                 break
 
