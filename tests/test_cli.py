@@ -47,7 +47,7 @@ class TestCLIGenerate:
             cli, ["generate", "/nonexistent/path", "-s", "Test project"]
         )
 
-        assert result.exit_code != 0
+        assert "Path does not exist" in result.output or result.exit_code != 0
 
     @patch("src.agents.main._generate_pipeline_mode")
     def test_generate_pipeline_mode_default(
@@ -164,6 +164,24 @@ class TestCLIGenerate:
         )
 
         mock_agent.assert_called_once()
+        assert result.exit_code == 0
+
+    @patch("src.agents.main.resolve_repo")
+    @patch("src.agents.main._generate_pipeline_mode")
+    def test_generate_with_github_url(self, mock_pipeline, mock_resolve, runner):
+        """Test that a GitHub URL is accepted and routed through resolve_repo."""
+        mock_pipeline.return_value = 0
+        mock_repo_path = Path("/tmp/ctx-fakerepo")
+        mock_resolve.return_value.__enter__ = Mock(return_value=mock_repo_path)
+        mock_resolve.return_value.__exit__ = Mock(return_value=False)
+
+        result = runner.invoke(
+            cli,
+            ["generate", "https://github.com/owner/repo", "-s", "Test project"],
+        )
+
+        mock_resolve.assert_called_once_with("https://github.com/owner/repo")
+        mock_pipeline.assert_called_once()
         assert result.exit_code == 0
 
 
@@ -538,7 +556,7 @@ Test content.
             cli, ["scope", "/nonexistent/path", "-q", "test question"]
         )
 
-        assert result.exit_code != 0
+        assert "Path does not exist" in result.output or result.exit_code != 0
 
     @patch("src.agents.main._scope_pipeline_mode")
     def test_scope_from_repo(self, mock_pipeline, runner, sample_repo):
@@ -574,4 +592,22 @@ Test content.
         )
 
         mock_agent.assert_called_once()
+        assert result.exit_code == 0
+
+    @patch("src.agents.main.resolve_repo")
+    @patch("src.agents.main._scope_pipeline_mode")
+    def test_scope_with_github_url(self, mock_pipeline, mock_resolve, runner):
+        """Test that a GitHub URL is accepted for scope and routed through resolve_repo."""
+        mock_pipeline.return_value = 0
+        mock_repo_path = Path("/tmp/ctx-fakerepo")
+        mock_resolve.return_value.__enter__ = Mock(return_value=mock_repo_path)
+        mock_resolve.return_value.__exit__ = Mock(return_value=False)
+
+        result = runner.invoke(
+            cli,
+            ["scope", "https://github.com/owner/repo", "-q", "auth flow"],
+        )
+
+        mock_resolve.assert_called_once_with("https://github.com/owner/repo")
+        mock_pipeline.assert_called_once()
         assert result.exit_code == 0

@@ -1,5 +1,6 @@
 """Main CLI entry point for Agentic Contextualizer."""
 
+import subprocess
 import click
 import yaml
 from pathlib import Path
@@ -12,6 +13,7 @@ from .llm.provider import AnthropicProvider
 from .scoper.discovery import extract_keywords, search_relevant_files
 from .scoper.scoped_analyzer import ScopedAnalyzer
 from .scoper.scoped_generator import ScopedGenerator
+from .repo_resolver import resolve_repo
 
 
 def _extract_repo_from_context(context_path: Path) -> str | None:
@@ -51,7 +53,7 @@ def cli():
 
 
 @cli.command()
-@click.argument("repo_path", type=click.Path(exists=True))
+@click.argument("source")
 @click.option("--summary", "-s", required=True, help="Brief description of the project")
 @click.option("--output", "-o", type=click.Path(), help="Output file path")
 @click.option(
@@ -63,33 +65,47 @@ def cli():
 )
 @click.option("--debug", is_flag=True, help="Enable debug output for agent mode")
 @click.option("--stream", is_flag=True, help="Enable streaming output for agent mode (real-time feedback)")
-def generate(repo_path: str, summary: str, output: str | None, mode: str, debug: bool, stream: bool):
+def generate(source: str, summary: str, output: str | None, mode: str, debug: bool, stream: bool):
     """Generate context for a repository.
 
+    SOURCE can be a local path or a GitHub URL.
+
     Examples:
-        # Pipeline mode (default, deterministic)
+        # From local path (pipeline mode, default)
         python -m agents.main generate /path/to/repo -s "FastAPI REST API"
+
+        # From GitHub URL
+        python -m agents.main generate https://github.com/owner/repo -s "FastAPI REST API"
 
         # Agent mode (agentic, uses LangChain agents)
         python -m agents.main generate /path/to/repo -s "FastAPI REST API" --mode agent
 
         # Agent mode with streaming output (real-time feedback)
         python -m agents.main generate /path/to/repo -s "API" --mode agent --stream
-
-        # Agent mode with debug output and streaming
-        python -m agents.main generate /path/to/repo -s "API" --mode agent --debug --stream
     """
-    repo = Path(repo_path).resolve()
     config = Config.from_env()
 
     if not config.api_key:
         click.echo("Error: ANTHROPIC_API_KEY not set in environment", err=True)
         return 1
 
-    if mode == "agent":
-        return _generate_agent_mode(repo, summary, config, debug, stream)
-    else:
-        return _generate_pipeline_mode(repo, summary, config)
+    try:
+        with resolve_repo(source) as repo:
+            if mode == "agent":
+                return _generate_agent_mode(repo, summary, config, debug, stream)
+            else:
+                return _generate_pipeline_mode(repo, summary, config)
+    except subprocess.CalledProcessError as e:
+        click.echo("Error: Failed to clone repository. Check the URL and your git credentials.", err=True)
+        if debug:
+            click.echo(f"Details: {e.stderr}", err=True)
+        return 1
+    except subprocess.TimeoutExpired:
+        click.echo("Error: Clone timed out. The repository may be too large or the network is slow.", err=True)
+        return 1
+    except ValueError as e:
+        click.echo(f"Error: {e}", err=True)
+        return 1
 
 
 def _generate_pipeline_mode(repo: Path, summary: str, config: Config) -> int:
@@ -344,7 +360,7 @@ def _refine_agent_mode(context_path: Path, request: str, config: Config, debug: 
 
 
 @cli.command()
-@click.argument("source", type=click.Path(exists=True))
+@click.argument("source")
 @click.option("--question", "-q", required=True, help="Question/topic to scope to")
 @click.option("--output", "-o", type=click.Path(), help="Output file path")
 @click.option(
@@ -359,37 +375,57 @@ def _refine_agent_mode(context_path: Path, request: str, config: Config, debug: 
 def scope(source: str, question: str, output: str | None, mode: str, debug: bool, stream: bool):
     """Generate scoped context for a specific question.
 
-    SOURCE can be either:
+    SOURCE can be:
     - A repository path: scopes directly from the repo
     - A context.md file: uses existing context as starting point
+    - A GitHub URL: clones the repo, scopes, then cleans up
 
     Examples:
         # Scope from repo
         python -m agents.main scope /path/to/repo -q "weather functionality"
 
+        # Scope from GitHub URL
+        python -m agents.main scope https://github.com/owner/repo -q "auth flow"
+
         # Scope from existing context
         python -m agents.main scope contexts/repo/context.md -q "auth flow"
-
-        # With custom output
-        python -m agents.main scope /path/to/repo -q "API endpoints" -o my-scope.md
 
         # Agent mode with streaming
         python -m agents.main scope /path/to/repo -q "auth" --mode agent --stream
     """
-    source_path = Path(source).resolve()
     config = Config.from_env()
 
     if not config.api_key:
         click.echo("Error: ANTHROPIC_API_KEY not set in environment", err=True)
         return 1
 
-    # Determine if source is a repo or context file
-    is_context_file = source_path.is_file() and source_path.suffix == ".md"
+    # Context files are handled directly (no resolve_repo needed)
+    source_path = Path(source)
+    if source_path.is_file() and source_path.suffix == ".md":
+        source_path = source_path.resolve()
+        if mode == "agent":
+            return _scope_agent_mode(source_path, question, config, True, debug, stream)
+        else:
+            return _scope_pipeline_mode(source_path, question, config, True, output)
 
-    if mode == "agent":
-        return _scope_agent_mode(source_path, question, config, is_context_file, debug, stream)
-    else:
-        return _scope_pipeline_mode(source_path, question, config, is_context_file, output)
+    # Repo path or GitHub URL - resolve it
+    try:
+        with resolve_repo(source) as repo:
+            if mode == "agent":
+                return _scope_agent_mode(repo, question, config, False, debug, stream)
+            else:
+                return _scope_pipeline_mode(repo, question, config, False, output)
+    except subprocess.CalledProcessError as e:
+        click.echo("Error: Failed to clone repository. Check the URL and your git credentials.", err=True)
+        if debug:
+            click.echo(f"Details: {e.stderr}", err=True)
+        return 1
+    except subprocess.TimeoutExpired:
+        click.echo("Error: Clone timed out. The repository may be too large or the network is slow.", err=True)
+        return 1
+    except ValueError as e:
+        click.echo(f"Error: {e}", err=True)
+        return 1
 
 
 def _scope_pipeline_mode(
