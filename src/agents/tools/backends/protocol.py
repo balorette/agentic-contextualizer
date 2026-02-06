@@ -1,4 +1,10 @@
-"""Protocol definition for file access backends."""
+"""Protocol definition for file access backends.
+
+This module defines the abstract protocol for file access, enabling:
+- Local filesystem access (default)
+- In-memory backends for testing
+- Future: GitHub API, MCP filesystem, remote repos
+"""
 
 from typing import Protocol, Iterator, runtime_checkable
 

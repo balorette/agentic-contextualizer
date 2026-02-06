@@ -1,7 +1,7 @@
 """Tests for scoper file backends."""
 
 import pytest
-from src.agents.scoper.backends import (
+from src.agents.tools import (
     FileBackend,
     LocalFileBackend,
     InMemoryFileBackend,
