@@ -127,7 +127,7 @@ source_context: contexts/repo/context.md  # Optional, if scoped from existing co
 ## {Relevant Sections}
 {Tailored to the specific topic - could be API endpoints, data models, etc.}
 
-## Key Files
+## Key Files and Lines
 {List of files the reader should examine}
 
 ## Usage Examples
@@ -137,9 +137,4 @@ source_context: contexts/repo/context.md  # Optional, if scoped from existing co
 **Output locations:**
 - Full context: `contexts/{repo-name}/context.md`
 - Scoped context: `contexts/{repo-name}/scope-{topic}.md`
-## Code Patterns & Standards
 
-- **LLM Provider**: Use a `LLMProvider` abstract base class to allow easy switching (e.g., OpenRouter, Anthropic, OpenAI).
-- **Configuration**: Store model choices and API keys in environment variables or a `.env` file.
-- **Logging**: Use standard Python `logging` with JSON formatting for machine-readability.
-- **Error Handling**: Fail fast on configuration errors; use retries for transient LLM errors.

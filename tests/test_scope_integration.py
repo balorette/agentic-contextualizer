@@ -84,6 +84,7 @@ def test_get_forecast():
             reasoning="Found all weather files",
             sufficient_context=True,
             preliminary_insights="Weather service provides forecast and alerts",
+            key_locations=[],  # Empty list of KeyLocation objects
         )
 
         # Mock generation response

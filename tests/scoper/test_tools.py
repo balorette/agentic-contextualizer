@@ -1,18 +1,19 @@
 """Tests for scoped context tools."""
 
 import pytest
-from src.agents.scoper.backends import InMemoryFileBackend, LocalFileBackend
-from src.agents.scoper.tools import (
-    read_scoped_file,
+from src.agents.tools import (
+    InMemoryFileBackend,
+    LocalFileBackend,
+    read_file,
     search_files,
     extract_imports,
     create_file_tools,
+    create_analysis_tools,
 )
-from src.agents.scoper.tools.analysis_tools import create_analysis_tools
 
 
 class TestReadScopedFile:
-    """Tests for read_scoped_file function."""
+    """Tests for read_file function."""
 
     def test_read_existing_file(self):
         """Test reading an existing file."""
@@ -20,7 +21,7 @@ class TestReadScopedFile:
             "src/main.py": "def main(): pass",
         })
 
-        result = read_scoped_file(backend, "src/main.py")
+        result = read_file(backend, "src/main.py")
 
         assert result.content == "def main(): pass"
         assert result.path == "src/main.py"
@@ -32,7 +33,7 @@ class TestReadScopedFile:
         """Test reading a file that doesn't exist."""
         backend = InMemoryFileBackend()
 
-        result = read_scoped_file(backend, "missing.py")
+        result = read_file(backend, "missing.py")
 
         assert result.content is None
         assert result.error is not None
@@ -44,7 +45,7 @@ class TestReadScopedFile:
             "large.py": "x" * 1000,
         })
 
-        result = read_scoped_file(backend, "large.py", max_chars=100)
+        result = read_file(backend, "large.py", max_chars=100)
 
         assert result.content == "x" * 100
         assert result.char_count == 100

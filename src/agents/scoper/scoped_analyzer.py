@@ -1,11 +1,11 @@
 """LLM-guided exploration for scoped context generation."""
 
 from pathlib import Path
-from typing import Dict, List, Any
+from typing import Dict, List, Any, Optional
 from pydantic import BaseModel, Field
 from ..llm.provider import LLMProvider
 from ..llm.prompts import SCOPE_EXPLORATION_PROMPT
-from .backends import FileBackend, LocalFileBackend
+from ..tools import FileBackend, LocalFileBackend, CodeReference
 
 # Maximum number of LLM-guided exploration rounds before forcing synthesis.
 # This limits cost and latency by preventing excessive iterations.
@@ -30,6 +30,15 @@ MAX_TREE_CHARS = 8_000
 MAX_FILES_IN_PROMPT = 12
 
 
+class KeyLocation(BaseModel):
+    """A key code location discovered during exploration."""
+
+    path: str = Field(description="File path")
+    line_start: int = Field(description="Starting line number")
+    line_end: Optional[int] = Field(default=None, description="Ending line number")
+    description: str = Field(description="Brief description of what this code does")
+
+
 class ScopeExplorationOutput(BaseModel):
     """Schema for scope exploration LLM output."""
 
@@ -42,6 +51,10 @@ class ScopeExplorationOutput(BaseModel):
     )
     preliminary_insights: str = Field(
         description="What has been learned so far about the scope question"
+    )
+    key_locations: List[KeyLocation] = Field(
+        default_factory=list,
+        description="Important code locations discovered with line numbers",
     )
 
 
@@ -94,13 +107,14 @@ class ScopedAnalyzer:
             file_tree: Repository file tree structure
 
         Returns:
-            Dict with relevant_files and insights
+            Dict with relevant_files, insights, and code_references
         """
         backend = self._get_backend(repo_path)
 
         # Track all files we've examined
         examined_files: Dict[str, str] = {}
         all_insights: List[str] = []
+        all_key_locations: List[KeyLocation] = []
 
         # Start with candidate files
         files_to_examine = [f["path"] for f in candidate_files]
@@ -123,6 +137,9 @@ class ScopedAnalyzer:
 
             all_insights.append(exploration_result.preliminary_insights)
 
+            # Collect key locations from this round
+            all_key_locations.extend(exploration_result.key_locations)
+
             if exploration_result.sufficient_context:
                 break
 
@@ -135,10 +152,46 @@ class ScopedAnalyzer:
             if not files_to_examine:
                 break
 
+        # Convert key locations to CodeReference objects
+        code_references = self._deduplicate_references(all_key_locations)
+
         return {
             "relevant_files": examined_files,
             "insights": "\n".join(all_insights),
+            "code_references": code_references,
         }
+
+    def _deduplicate_references(
+        self, locations: List[KeyLocation]
+    ) -> List[CodeReference]:
+        """Convert KeyLocations to CodeReferences, removing duplicates.
+
+        Deduplicates by (path, line_start) to avoid repeated references
+        to the same code location.
+
+        Args:
+            locations: List of KeyLocation objects from exploration
+
+        Returns:
+            List of unique CodeReference objects
+        """
+        seen: set[tuple[str, int]] = set()
+        references: List[CodeReference] = []
+
+        for loc in locations:
+            key = (loc.path, loc.line_start)
+            if key not in seen:
+                seen.add(key)
+                references.append(
+                    CodeReference(
+                        path=loc.path,
+                        line_start=loc.line_start,
+                        line_end=loc.line_end,
+                        description=loc.description,
+                    )
+                )
+
+        return references
 
     def _explore(
         self,

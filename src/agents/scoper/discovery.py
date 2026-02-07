@@ -137,3 +137,5 @@ def search_relevant_files(
     # Sort by score descending, limit results
     results.sort(key=lambda x: x["score"], reverse=True)
     return results[:max_results]
+
+
