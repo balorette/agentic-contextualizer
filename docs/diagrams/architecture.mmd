@@ -1,0 +1,52 @@
+graph TB
+    subgraph CLI["CLI Layer (Click)"]
+        generate["generate command"]
+        refine["refine command"]
+        scope["scope command"]
+    end
+
+    subgraph Modes["Execution Modes"]
+        pipeline["Pipeline Mode\n(Deterministic)"]
+        agent["Agent Mode\n(LangChain/LangGraph)"]
+    end
+
+    subgraph FullPipeline["Full Context Pipeline"]
+        scan["Structure Scanner\n(No LLM)"]
+        meta["Metadata Extractor\n(No LLM)"]
+        analyze["Code Analyzer\n(LLM Call #1)"]
+        gen["Context Generator\n(LLM Call #2)"]
+    end
+
+    subgraph ScopedPipeline["Scoped Context Pipeline"]
+        discover["Discovery\n(No LLM)"]
+        explore["Exploration\n(1-3 LLM Calls)"]
+        synth["Synthesis\n(1 LLM Call)"]
+    end
+
+    subgraph Support["Support Layer"]
+        llm["LLM Provider\n(Anthropic)"]
+        tools["Tools\n(File, Search, Analysis)"]
+        backends["Backend Abstraction\n(Local / InMemory)"]
+        middleware["Middleware\n(Budget, HITL)"]
+    end
+
+    subgraph Output["Output"]
+        fullctx["contexts/repo/context.md"]
+        scopedctx["contexts/repo/scope-topic.md"]
+    end
+
+    generate --> pipeline & agent
+    refine --> pipeline & agent
+    scope --> pipeline & agent
+
+    pipeline --> scan --> meta --> analyze --> gen
+    pipeline --> discover --> explore --> synth
+
+    agent --> tools
+    tools --> backends
+
+    analyze & gen & explore & synth --> llm
+    agent -.-> middleware
+
+    gen --> fullctx
+    synth --> scopedctx
