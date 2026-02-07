@@ -1,9 +1,9 @@
 """Tests for repo_resolver - GitHub URL detection, cloning, and cleanup."""
 
+import shutil
 import subprocess
 import pytest
-from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 from agents.repo_resolver import (
     is_github_url,
@@ -130,11 +130,12 @@ class TestResolveRepo:
                 pass
 
     @patch("agents.repo_resolver.clone_repo")
-    @patch("agents.repo_resolver.shutil.rmtree")
+    @patch("agents.repo_resolver.shutil.rmtree", wraps=shutil.rmtree)
     def test_github_url_clones_and_cleans_up(self, mock_rmtree, mock_clone):
         """GitHub URL triggers clone, yields path, cleans up after."""
         with resolve_repo("https://github.com/owner/repo") as path:
-            assert "ctx-" in str(path)
+            assert path.name == "repo"
+            assert "ctx-" in str(path.parent)
             mock_clone.assert_called_once()
 
         # Cleanup called after context manager exits
@@ -142,7 +143,7 @@ class TestResolveRepo:
         assert mock_rmtree.call_args[1] == {"ignore_errors": True}
 
     @patch("agents.repo_resolver.clone_repo")
-    @patch("agents.repo_resolver.shutil.rmtree")
+    @patch("agents.repo_resolver.shutil.rmtree", wraps=shutil.rmtree)
     def test_cleanup_on_pipeline_error(self, mock_rmtree, mock_clone):
         """Temp directory is cleaned up even if the pipeline raises."""
         with pytest.raises(RuntimeError, match="pipeline broke"):
@@ -153,7 +154,7 @@ class TestResolveRepo:
         mock_rmtree.assert_called_once()
 
     @patch("agents.repo_resolver.clone_repo")
-    @patch("agents.repo_resolver.shutil.rmtree")
+    @patch("agents.repo_resolver.shutil.rmtree", wraps=shutil.rmtree)
     def test_cleanup_on_clone_error(self, mock_rmtree, mock_clone):
         """Temp directory is cleaned up even if clone itself fails."""
         mock_clone.side_effect = subprocess.CalledProcessError(

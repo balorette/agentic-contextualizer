@@ -68,15 +68,17 @@ Scanner, analyzer, generator, scoper, backends, tools, config, models.
 def resolve_repo(source: str):
     if is_github_url(source):
         tmp_dir = tempfile.mkdtemp(prefix="ctx-")
+        repo_name = extract_repo_name(source)
+        clone_dir = os.path.join(tmp_dir, repo_name)
         try:
-            clone_repo(source, tmp_dir)
-            yield Path(tmp_dir)
+            clone_repo(source, clone_dir)
+            yield Path(clone_dir)
         finally:
             shutil.rmtree(tmp_dir, ignore_errors=True)
     else:
         path = Path(source)
         if not path.exists():
-            raise click.BadParameter(f"Path does not exist: {source}")
+            raise ValueError(f"Path does not exist: {source}")
         yield path
 ```
 
@@ -102,7 +104,7 @@ Same pattern for `scope` when source is a repo (not a context file).
 - Clone failure: `"Failed to clone repository. Check the URL and your git credentials."`
 - Invalid source: `"Source is not a valid local path or GitHub URL."`
 
-**Output path:** `contexts/{repo-name}/context.md` using name extracted from URL.
+**Output path:** `contexts/{repo-name}/context.md` where `{repo-name}` is derived from `repo_path.name`. For cloned URLs, the repo is cloned into `<tmp>/<repo-name>` so `path.name` returns the correct name.
 
 ### Authentication
 

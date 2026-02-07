@@ -1,6 +1,7 @@
 """Resolve repository sources - local paths or GitHub URLs."""
 
 import logging
+import os
 import re
 import shutil
 import subprocess
@@ -81,9 +82,11 @@ def resolve_repo(source: str):
     """
     if is_github_url(source):
         tmp_dir = tempfile.mkdtemp(prefix="ctx-")
+        repo_name = extract_repo_name(source)
+        clone_dir = os.path.join(tmp_dir, repo_name)
         try:
-            clone_repo(source, tmp_dir)
-            yield Path(tmp_dir)
+            clone_repo(source, clone_dir)
+            yield Path(clone_dir)
         finally:
             shutil.rmtree(tmp_dir, ignore_errors=True)
             logger.info("Cleaned up temp directory: %s", tmp_dir)

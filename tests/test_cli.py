@@ -47,7 +47,7 @@ class TestCLIGenerate:
             cli, ["generate", "/nonexistent/path", "-s", "Test project"]
         )
 
-        assert "Path does not exist" in result.output or result.exit_code != 0
+        assert "Path does not exist" in result.output
 
     @patch("src.agents.main._generate_pipeline_mode")
     def test_generate_pipeline_mode_default(
@@ -556,7 +556,7 @@ Test content.
             cli, ["scope", "/nonexistent/path", "-q", "test question"]
         )
 
-        assert "Path does not exist" in result.output or result.exit_code != 0
+        assert "Path does not exist" in result.output
 
     @patch("src.agents.main._scope_pipeline_mode")
     def test_scope_from_repo(self, mock_pipeline, runner, sample_repo):
