@@ -1,0 +1,37 @@
+sequenceDiagram
+    participant User
+    participant CLI as CLI (main.py)
+    participant Scanner as StructureScanner
+    participant Meta as MetadataExtractor
+    participant Analyzer as CodeAnalyzer
+    participant LLM as AnthropicProvider
+    participant Generator as ContextGenerator
+    participant FS as File System
+
+    User->>CLI: generate /repo --summary "desc"
+    CLI->>Scanner: scan(repo_path)
+    Scanner->>FS: Walk file tree
+    FS-->>Scanner: File list + tree
+    Scanner-->>CLI: {tree, all_files, total_files}
+
+    CLI->>Meta: extract(repo_path)
+    Meta->>FS: Read package.json / pyproject.toml
+    FS-->>Meta: Config contents
+    Meta-->>CLI: ProjectMetadata
+
+    CLI->>Analyzer: analyze(repo, metadata, tree, summary)
+    Analyzer->>FS: Read key files (max 20)
+    FS-->>Analyzer: File contents
+    Analyzer->>LLM: CODE_ANALYSIS_PROMPT + files
+    Note over LLM: LLM Call #1
+    LLM-->>Analyzer: CodeAnalysisOutput
+    Analyzer-->>CLI: CodeAnalysis
+
+    CLI->>Generator: generate(metadata, analysis, summary)
+    Generator->>LLM: CONTEXT_GENERATION_PROMPT + data
+    Note over LLM: LLM Call #2
+    LLM-->>Generator: Markdown content
+    Generator->>FS: Write contexts/repo/context.md
+    Generator-->>CLI: output_path
+
+    CLI-->>User: Context generated: contexts/repo/context.md
