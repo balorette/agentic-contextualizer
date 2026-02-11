@@ -16,6 +16,7 @@ dependencies = [
     "click>=8.1.0",
     "pathspec>=0.12.1",
     "rich>=13.0.0",
+    "litellm>=1.0.0",
 ]
 
 [project.optional-dependencies]
