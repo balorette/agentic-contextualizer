@@ -51,3 +51,29 @@ def test_litellm_provider_init():
     assert provider.base_url == "https://custom.api"
     assert provider.max_retries == 5
     assert provider.timeout == 120
+
+
+def test_litellm_provider_generate(mocker):
+    """Test LiteLLMProvider.generate() with mocked litellm."""
+    mock_response = mocker.Mock()
+    mock_response.choices = [mocker.Mock(message=mocker.Mock(content="Test response"))]
+    mock_response.usage = mocker.Mock(total_tokens=100)
+
+    mock_completion = mocker.patch("litellm.completion", return_value=mock_response)
+
+    provider = LiteLLMProvider(model_name="gpt-4o", api_key="test-key")
+    response = provider.generate("Test prompt", system="Test system")
+
+    assert response.content == "Test response"
+    assert response.model == "gpt-4o"
+    assert response.tokens_used == 100
+
+    # Verify litellm.completion was called correctly
+    mock_completion.assert_called_once()
+    call_kwargs = mock_completion.call_args[1]
+    assert call_kwargs["model"] == "gpt-4o"
+    assert call_kwargs["api_key"] == "test-key"
+    assert call_kwargs["messages"][0]["role"] == "system"
+    assert call_kwargs["messages"][0]["content"] == "Test system"
+    assert call_kwargs["messages"][1]["role"] == "user"
+    assert call_kwargs["messages"][1]["content"] == "Test prompt"
