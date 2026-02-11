@@ -159,3 +159,17 @@ def test_create_llm_provider_anthropic():
     provider = create_llm_provider(config)
 
     assert isinstance(provider, AnthropicProvider)
+
+
+def test_legacy_config_still_works(monkeypatch):
+    """Test that old .env files work unchanged."""
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    monkeypatch.setenv("MODEL_NAME", "claude-3-5-sonnet-20241022")
+    # Don't set LLM_PROVIDER - should default to anthropic
+
+    config = Config.from_env()
+    provider = create_llm_provider(config)
+
+    assert config.llm_provider == "anthropic"
+    assert isinstance(provider, AnthropicProvider)
+    assert provider.api_key == "test-key"
