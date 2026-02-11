@@ -9,7 +9,7 @@ from ..scanner.structure import StructureScanner
 from ..scanner.metadata import MetadataExtractor
 from ..analyzer.code_analyzer import CodeAnalyzer
 from ..generator.context_generator import ContextGenerator
-from ..llm.provider import AnthropicProvider
+from ..llm.provider import LLMProvider, create_llm_provider
 from ..models import ProjectMetadata, CodeAnalysis
 
 # Module-level initialization (shared across tool calls for efficiency)
@@ -18,13 +18,13 @@ _scanner = StructureScanner(_config)
 _metadata_extractor = MetadataExtractor()
 
 
-def _get_llm_provider() -> AnthropicProvider:
+def _get_llm_provider() -> LLMProvider:
     """Get LLM provider instance from config.
 
     Returns:
-        Configured Anthropic LLM provider
+        Configured LLM provider
     """
-    return AnthropicProvider(_config.model_name, _config.api_key)
+    return create_llm_provider(_config)
 
 
 def _get_context_generator() -> ContextGenerator:
