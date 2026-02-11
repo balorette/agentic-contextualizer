@@ -1,11 +1,14 @@
 """Abstract LLM provider interface."""
 
 from abc import ABC, abstractmethod
-from typing import Any, Optional, Type
+from typing import Any, Optional, Type, TYPE_CHECKING
 from pydantic import BaseModel
 from langchain_anthropic import ChatAnthropic
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.rate_limiters import InMemoryRateLimiter
+
+if TYPE_CHECKING:
+    from ..config import Config
 
 
 class LLMResponse(BaseModel):
@@ -43,7 +46,7 @@ class AnthropicProvider(LLMProvider):
             max_bucket_size=20,  # Controls the maximum burst size.
         )
     
-    def __init__(self, model_name: str, api_key: str, max_retries: int = 3, timeout: int = 60):
+    def __init__(self, model_name: str, api_key: str, max_retries: int = 3, timeout: int = 60, base_url: Optional[str] = None):
         """Initialize the Anthropic provider.
 
         Args:
@@ -51,16 +54,27 @@ class AnthropicProvider(LLMProvider):
             api_key: Anthropic API key
             max_retries: Maximum retry attempts for API calls
             timeout: Request timeout in seconds
+            base_url: Optional custom API endpoint URL
         """
         self.model_name = model_name
         self.api_key = api_key
         self.max_retries = max_retries
         self.timeout = timeout
+        self.base_url = base_url
         self.rate_limiter = self._rl()
 
-        self.client = ChatAnthropic(
-            model=model_name, anthropic_api_key=api_key, max_retries=max_retries, timeout=timeout, rate_limiter=self.rate_limiter
-        )
+        client_kwargs = {
+            "model": model_name,
+            "anthropic_api_key": api_key,
+            "max_retries": max_retries,
+            "timeout": timeout,
+            "rate_limiter": self.rate_limiter,
+        }
+
+        if base_url:
+            client_kwargs["base_url"] = base_url
+
+        self.client = ChatAnthropic(**client_kwargs)
 
     def generate(self, prompt: str, system: Optional[str] = None) -> LLMResponse:
         """Generate a response using Claude.
@@ -159,3 +173,58 @@ class AnthropicProvider(LLMProvider):
             return "".join(parts).strip()
 
         return str(content)
+
+
+def _resolve_api_key_for_model(model_name: str, config: "Config") -> Optional[str]:
+    """Resolve which API key to use based on model name.
+
+    Args:
+        model_name: LiteLLM model identifier
+        config: Application configuration
+
+    Returns:
+        Appropriate API key or None for local models
+    """
+    if model_name.startswith("gpt-") or model_name.startswith("o1"):
+        return config.openai_api_key
+    elif model_name.startswith("claude"):
+        return config.anthropic_api_key or config.api_key
+    elif model_name.startswith("gemini") or model_name.startswith("vertex"):
+        return config.google_api_key
+    elif model_name.startswith("ollama") or model_name.startswith("lmstudio"):
+        return None  # Local models don't need API keys
+    else:
+        # For other providers, return None
+        return None
+
+
+def create_llm_provider(config: "Config") -> LLMProvider:
+    """Factory function to create the appropriate LLM provider.
+
+    Args:
+        config: Application configuration
+
+    Returns:
+        Configured LLM provider instance (AnthropicProvider or LiteLLMProvider)
+    """
+    if config.llm_provider == "litellm":
+        from .litellm_provider import LiteLLMProvider
+
+        # Determine which API key to use based on model
+        api_key = _resolve_api_key_for_model(config.model_name, config)
+
+        return LiteLLMProvider(
+            model_name=config.model_name,
+            api_key=api_key,
+            base_url=config.api_base_url,
+            max_retries=config.max_retries,
+            timeout=config.timeout,
+        )
+    else:  # "anthropic" or default
+        return AnthropicProvider(
+            model_name=config.model_name,
+            api_key=config.anthropic_api_key or config.api_key,
+            base_url=config.api_base_url,
+            max_retries=config.max_retries,
+            timeout=config.timeout,
+        )

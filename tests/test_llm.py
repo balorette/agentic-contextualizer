@@ -2,9 +2,9 @@
 
 import os
 import pytest
-from agents.llm.provider import AnthropicProvider, LLMResponse
+from agents.llm.provider import AnthropicProvider, LLMResponse, create_llm_provider
+from agents.llm.litellm_provider import LiteLLMProvider
 from agents.config import Config
-from src.agents.llm.litellm_provider import LiteLLMProvider
 
 
 def test_anthropic_provider_initialization(config):
@@ -134,3 +134,28 @@ def test_litellm_provider_generate_structured(mocker):
     assert isinstance(result, TestSchema)
     assert result.name == "test"
     assert result.count == 42
+
+
+def test_create_llm_provider_litellm():
+    """Test factory creates LiteLLMProvider for litellm config."""
+    config = Config(
+        llm_provider="litellm",
+        model_name="gpt-4o",
+        openai_api_key="test-key"
+    )
+    provider = create_llm_provider(config)
+
+    assert isinstance(provider, LiteLLMProvider)
+    assert provider.model_name == "gpt-4o"
+    assert provider.api_key == "test-key"
+
+
+def test_create_llm_provider_anthropic():
+    """Test factory creates AnthropicProvider for default config."""
+    config = Config(
+        llm_provider="anthropic",
+        anthropic_api_key="test-key"
+    )
+    provider = create_llm_provider(config)
+
+    assert isinstance(provider, AnthropicProvider)
