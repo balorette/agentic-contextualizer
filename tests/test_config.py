@@ -21,3 +21,18 @@ def test_config_from_env_overrides(monkeypatch, tmp_path):
     assert set(DEFAULT_IGNORED_DIRS).issubset(set(config.ignored_dirs))
     assert "coverage" in config.ignored_dirs
     assert ".mypy_cache" in config.ignored_dirs
+
+
+def test_config_from_env_provider_keys(monkeypatch):
+    """Test loading provider-specific API keys from environment."""
+    monkeypatch.setenv("LLM_PROVIDER", "litellm")
+    monkeypatch.setenv("MODEL_NAME", "gpt-4o")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test-openai")
+    monkeypatch.setenv("GOOGLE_API_KEY", "test-google-key")
+
+    config = Config.from_env()
+
+    assert config.llm_provider == "litellm"
+    assert config.model_name == "gpt-4o"
+    assert config.openai_api_key == "sk-test-openai"
+    assert config.google_api_key == "test-google-key"

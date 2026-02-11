@@ -29,6 +29,13 @@ class Config(BaseModel):
     llm_provider: str = Field(default="anthropic")
     model_name: str = Field(default="claude-3-5-sonnet-20241022")
     api_key: Optional[str] = Field(default=None)
+    api_base_url: Optional[str] = Field(default=None)
+
+    # Provider-specific API keys
+    anthropic_api_key: Optional[str] = Field(default=None)
+    openai_api_key: Optional[str] = Field(default=None)
+    google_api_key: Optional[str] = Field(default=None)
+
     max_retries: int = Field(default=3)
     timeout: int = Field(default=60)
 
@@ -57,13 +64,22 @@ class Config(BaseModel):
 
         output_dir_env = os.getenv("OUTPUT_DIR")
 
-        return cls(
-            llm_provider=os.getenv("LLM_PROVIDER", "anthropic"),
-            model_name=os.getenv("MODEL_NAME", "claude-3-5-sonnet-20241022"),
-            api_key=os.getenv("ANTHROPIC_API_KEY"),
-            max_retries=_parse_int(os.getenv("LLM_MAX_RETRIES"), 3),
-            timeout=_parse_int(os.getenv("LLM_TIMEOUT"), 60),
-            max_file_size=_parse_int(os.getenv("MAX_FILE_SIZE"), 1_000_000),
-            ignored_dirs=ignored_dirs,
-            output_dir=Path(output_dir_env) if output_dir_env else Path("contexts"),
-        )
+        config_dict = {
+            "llm_provider": os.getenv("LLM_PROVIDER", "anthropic"),
+            "model_name": os.getenv("MODEL_NAME", "claude-3-5-sonnet-20241022"),
+            "api_key": os.getenv("ANTHROPIC_API_KEY"),
+            "api_base_url": os.getenv("ANTHROPIC_BASE_URL"),
+
+            # Provider-specific keys
+            "anthropic_api_key": os.getenv("ANTHROPIC_API_KEY"),
+            "openai_api_key": os.getenv("OPENAI_API_KEY"),
+            "google_api_key": os.getenv("GOOGLE_API_KEY"),
+
+            "max_retries": _parse_int(os.getenv("LLM_MAX_RETRIES"), 3),
+            "timeout": _parse_int(os.getenv("LLM_TIMEOUT"), 60),
+            "max_file_size": _parse_int(os.getenv("MAX_FILE_SIZE"), 1_000_000),
+            "ignored_dirs": ignored_dirs,
+            "output_dir": Path(output_dir_env) if output_dir_env else Path("contexts"),
+        }
+
+        return cls(**config_dict)
