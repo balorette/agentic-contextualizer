@@ -63,9 +63,11 @@ def cli():
     default="pipeline",
     help="Execution mode: pipeline (deterministic) or agent (agentic)",
 )
+@click.option("--provider", help="LLM provider: anthropic or litellm")
+@click.option("--model", help="Model name (e.g., gpt-4o, claude-3-5-sonnet-20241022)")
 @click.option("--debug", is_flag=True, help="Enable debug output for agent mode")
 @click.option("--stream", is_flag=True, help="Enable streaming output for agent mode (real-time feedback)")
-def generate(source: str, summary: str, output: str | None, mode: str, debug: bool, stream: bool):
+def generate(source: str, summary: str, output: str | None, mode: str, provider: str | None, model: str | None, debug: bool, stream: bool):
     """Generate context for a repository.
 
     SOURCE can be a local path or a GitHub URL.
@@ -83,7 +85,14 @@ def generate(source: str, summary: str, output: str | None, mode: str, debug: bo
         # Agent mode with streaming output (real-time feedback)
         python -m agents.main generate /path/to/repo -s "API" --mode agent --stream
     """
-    config = Config.from_env()
+    # Build CLI overrides dict
+    cli_overrides = {}
+    if provider:
+        cli_overrides["llm_provider"] = provider
+    if model:
+        cli_overrides["model_name"] = model
+
+    config = Config.from_env(cli_overrides=cli_overrides)
 
     if not config.api_key:
         click.echo("Error: ANTHROPIC_API_KEY not set in environment", err=True)
