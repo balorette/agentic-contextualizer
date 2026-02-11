@@ -394,9 +394,11 @@ def _refine_agent_mode(context_path: Path, request: str, config: Config, debug: 
     default="pipeline",
     help="Execution mode: pipeline (deterministic) or agent (agentic)",
 )
+@click.option("--provider", help="LLM provider: anthropic or litellm")
+@click.option("--model", help="Model name (e.g., gpt-4o, claude-3-5-sonnet-20241022)")
 @click.option("--debug", is_flag=True, help="Enable debug output")
 @click.option("--stream", is_flag=True, help="Enable streaming output (agent mode)")
-def scope(source: str, question: str, output: str | None, mode: str, debug: bool, stream: bool):
+def scope(source: str, question: str, output: str | None, mode: str, provider: str | None, model: str | None, debug: bool, stream: bool):
     """Generate scoped context for a specific question.
 
     SOURCE can be:
@@ -417,7 +419,14 @@ def scope(source: str, question: str, output: str | None, mode: str, debug: bool
         # Agent mode with streaming
         python -m agents.main scope /path/to/repo -q "auth" --mode agent --stream
     """
-    config = Config.from_env()
+    # Build CLI overrides dict
+    cli_overrides = {}
+    if provider:
+        cli_overrides["llm_provider"] = provider
+    if model:
+        cli_overrides["model_name"] = model
+
+    config = Config.from_env(cli_overrides=cli_overrides)
 
     if not config.api_key:
         click.echo("Error: ANTHROPIC_API_KEY not set in environment", err=True)
