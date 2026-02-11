@@ -31,7 +31,7 @@ class TestCreateScopedAgent:
     @pytest.fixture
     def mock_llm(self):
         """Mock LLM provider."""
-        with patch("src.agents.scoper.agent.AnthropicProvider") as mock:
+        with patch("src.agents.scoper.agent.create_llm_provider") as mock:
             yield mock
 
     @pytest.fixture
