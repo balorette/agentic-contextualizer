@@ -9,7 +9,7 @@ from .scanner.structure import StructureScanner
 from .scanner.metadata import MetadataExtractor
 from .analyzer.code_analyzer import CodeAnalyzer
 from .generator.context_generator import ContextGenerator
-from .llm.provider import AnthropicProvider
+from .llm.provider import create_llm_provider
 from .scoper.discovery import extract_keywords, search_relevant_files
 from .scoper.scoped_analyzer import ScopedAnalyzer
 from .scoper.scoped_generator import ScopedGenerator
@@ -129,7 +129,7 @@ def _generate_pipeline_mode(repo: Path, summary: str, config: Config) -> int:
 
     # Step 3: Code Analysis (LLM Call 1)
     click.echo(f"\n🤖 Analyzing code with {config.model_name}...")
-    llm = AnthropicProvider(config.model_name, config.api_key)
+    llm = create_llm_provider(config)
     analyzer = CodeAnalyzer(llm)
     analysis = analyzer.analyze(repo, metadata, structure["tree"], summary)
     click.echo(f"   Architecture: {', '.join(analysis.architecture_patterns)}")
@@ -162,7 +162,10 @@ def _generate_agent_mode(repo: Path, summary: str, config: Config, debug: bool, 
 
     # Create agent
     agent = create_contextualizer_agent(
-        model_name=config.model_name if config.model_name.startswith("anthropic:") else f"anthropic:{config.model_name}", checkpointer=checkpointer, debug=debug
+        model_name=config.model_name if config.model_name.startswith("anthropic:") else f"anthropic:{config.model_name}",
+        checkpointer=checkpointer,
+        debug=debug,
+        base_url=config.api_base_url,
     )
 
     # Create agent configuration with thread ID
@@ -265,7 +268,7 @@ def _refine_pipeline_mode(context_path: Path, request: str, config: Config) -> i
     """Refine context using deterministic pipeline mode."""
     click.echo(f"🔄 Refining: {context_path}")
 
-    llm = AnthropicProvider(config.model_name, config.api_key)
+    llm = AnthropicProvider(config.model_name, config.api_key, base_url=config.api_base_url)
     generator = ContextGenerator(llm, config.output_dir)
 
     updated_path = generator.refine(context_path, request)
@@ -297,7 +300,10 @@ def _refine_agent_mode(context_path: Path, request: str, config: Config, debug: 
 
     # Create agent
     agent = create_contextualizer_agent(
-        model_name=f"anthropic:{config.model_name}", checkpointer=checkpointer, debug=debug
+        model_name=f"anthropic:{config.model_name}",
+        checkpointer=checkpointer,
+        debug=debug,
+        base_url=config.api_base_url,
     )
 
     # Use same thread ID as generation (based on repo path)
@@ -485,7 +491,7 @@ def _scope_pipeline_mode(
 
     # Phase 2: LLM-guided exploration
     click.echo(f"\n🤖 Phase 2: Exploration with {config.model_name}...")
-    llm = AnthropicProvider(config.model_name, config.api_key)
+    llm = AnthropicProvider(config.model_name, config.api_key, base_url=config.api_base_url)
     analyzer = ScopedAnalyzer(llm)
 
     analysis_result = analyzer.analyze(
@@ -562,6 +568,7 @@ def _scope_agent_mode(
         checkpointer=checkpointer,
         output_dir=config.output_dir,
         debug=debug,
+        base_url=config.api_base_url,
     )
 
     # Create agent configuration
