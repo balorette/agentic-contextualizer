@@ -245,9 +245,11 @@ def _generate_agent_mode(repo: Path, summary: str, config: Config, debug: bool, 
     default="pipeline",
     help="Execution mode: pipeline (deterministic) or agent (agentic)",
 )
+@click.option("--provider", help="LLM provider: anthropic or litellm")
+@click.option("--model", help="Model name (e.g., gpt-4o, claude-3-5-sonnet-20241022)")
 @click.option("--debug", is_flag=True, help="Enable debug output for agent mode")
 @click.option("--stream", is_flag=True, help="Enable streaming output for agent mode (real-time feedback)")
-def refine(context_file: str, request: str, mode: str, debug: bool, stream: bool):
+def refine(context_file: str, request: str, mode: str, provider: str | None, model: str | None, debug: bool, stream: bool):
     """Refine an existing context file.
 
     Examples:
@@ -260,8 +262,15 @@ def refine(context_file: str, request: str, mode: str, debug: bool, stream: bool
         # Agent mode with streaming output
         python -m agents.main refine contexts/myapp/context.md -r "Add auth" --mode agent --stream
     """
+    # Build CLI overrides dict
+    cli_overrides = {}
+    if provider:
+        cli_overrides["llm_provider"] = provider
+    if model:
+        cli_overrides["model_name"] = model
+
     context_path = Path(context_file)
-    config = Config.from_env()
+    config = Config.from_env(cli_overrides=cli_overrides)
 
     if not config.api_key:
         click.echo("Error: ANTHROPIC_API_KEY not set in environment", err=True)
