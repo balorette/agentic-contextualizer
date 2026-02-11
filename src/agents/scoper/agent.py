@@ -15,7 +15,7 @@ from ..tools import (
     create_search_tools,
 )
 from .scoped_generator import ScopedGenerator
-from ..llm.provider import AnthropicProvider
+from ..llm.provider import create_llm_provider
 from ..config import Config
 
 
@@ -97,6 +97,7 @@ def create_scoped_agent(
     checkpointer: Optional[object] = None,
     output_dir: str = "contexts",
     debug: bool = False,
+    base_url: Optional[str] = None,
 ):
     """Create a scoped context generation agent.
 
@@ -107,6 +108,7 @@ def create_scoped_agent(
         checkpointer: Optional checkpointer for state persistence
         output_dir: Directory for output files
         debug: Enable verbose logging
+        base_url: Optional custom API endpoint URL
 
     Returns:
         Compiled StateGraph agent ready for invocation
@@ -131,7 +133,11 @@ def create_scoped_agent(
     backend = file_backend or LocalFileBackend(repo_path)
 
     # Initialize chat model
-    model = init_chat_model(model_name)
+    model_kwargs = {}
+    if base_url:
+        model_kwargs["base_url"] = base_url
+
+    model = init_chat_model(model_name, **model_kwargs)
 
     # Create file, analysis, and code search tools bound to backend
     file_tools = create_file_tools(backend)
@@ -140,7 +146,7 @@ def create_scoped_agent(
 
     # Create the generation tool (needs LLM and output config)
     config = Config.from_env()
-    llm_provider = AnthropicProvider(config.model_name, config.api_key)
+    llm_provider = create_llm_provider(config)
     generator = ScopedGenerator(llm_provider, output_dir)
 
     @tool
@@ -227,6 +233,7 @@ def create_scoped_agent_with_budget(
     checkpointer: Optional[object] = None,
     output_dir: str = "contexts",
     debug: bool = False,
+    base_url: Optional[str] = None,
 ):
     """Create scoped agent with budget tracking.
 
@@ -238,6 +245,7 @@ def create_scoped_agent_with_budget(
         checkpointer: Optional checkpointer for state persistence
         output_dir: Directory for output files
         debug: Enable verbose logging
+        base_url: Optional custom API endpoint URL
 
     Returns:
         Tuple of (agent, budget_tracker)
@@ -250,6 +258,7 @@ def create_scoped_agent_with_budget(
         checkpointer=checkpointer,
         output_dir=output_dir,
         debug=debug,
+        base_url=base_url,
     )
 
     tracker = BudgetTracker(max_tokens=max_tokens, max_cost_usd=max_cost_usd)
