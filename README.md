@@ -33,7 +33,79 @@ cp .env.example .env
 # Edit .env and add your ANTHROPIC_API_KEY
 ```
 
+**Available Configuration Options:**
+
+- `ANTHROPIC_API_KEY` - Your Anthropic API key (required)
+- `MODEL_NAME` - Claude model to use (default: `claude-3-5-sonnet-20241022`)
+- `ANTHROPIC_BASE_URL` - Custom API endpoint URL (optional, for proxies or alternative providers)
+- `LLM_PROVIDER` - LLM provider (default: `anthropic`)
+- `MAX_FILE_SIZE` - Maximum file size in bytes (default: `1000000`)
+- `OUTPUT_DIR` - Output directory for context files (default: `contexts`)
+
+**Example using a custom API endpoint:**
+
+```bash
+# .env
+ANTHROPIC_API_KEY=your_api_key_here
+ANTHROPIC_BASE_URL=https://your-proxy.example.com
+```
+
 > ⚠️ Never commit `.env` files. Rotate exposed keys immediately.
+
+## Multi-Provider Support
+
+The tool supports multiple LLM providers through LiteLLM integration. Use any provider you have access to:
+
+### OpenAI
+
+```bash
+# .env
+LLM_PROVIDER=litellm
+MODEL_NAME=gpt-4o
+OPENAI_API_KEY=sk-...
+```
+
+### Google Gemini
+
+```bash
+# .env
+LLM_PROVIDER=litellm
+MODEL_NAME=gemini/gemini-2.0-flash-exp
+GOOGLE_API_KEY=...
+```
+
+### Local Models (Ollama)
+
+```bash
+# .env
+LLM_PROVIDER=litellm
+MODEL_NAME=ollama/llama3
+# No API key needed
+```
+
+### CLI Overrides
+
+Override provider/model for a single command:
+
+```bash
+python -m agents.main generate /path/to/repo \
+  --summary "Description" \
+  --provider litellm \
+  --model gpt-4o
+```
+
+### Supported Providers
+
+LiteLLM supports 100+ providers including:
+- OpenAI (GPT-4o, GPT-4, GPT-3.5)
+- Anthropic (Claude 3.5 Sonnet, Claude 3 Opus/Haiku)
+- Google (Gemini, Vertex AI)
+- AWS Bedrock
+- Azure OpenAI
+- Ollama (local models)
+- And many more...
+
+See [LiteLLM's provider docs](https://docs.litellm.ai/docs/providers) for the complete list.
 
 ## Usage
 
