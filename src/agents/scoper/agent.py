@@ -17,6 +17,7 @@ from ..tools import (
 from .scoped_generator import ScopedGenerator
 from ..llm.provider import create_llm_provider
 from ..config import Config
+from ..factory import _format_model_name_for_langchain
 
 
 SCOPED_AGENT_SYSTEM_PROMPT = """You are a scoped context generator agent. Your goal is to analyze a specific aspect of a codebase and produce focused documentation.
@@ -98,6 +99,8 @@ def create_scoped_agent(
     output_dir: str = "contexts",
     debug: bool = False,
     base_url: Optional[str] = None,
+    api_key: Optional[str] = None,
+    use_litellm: bool = False,
 ):
     """Create a scoped context generation agent.
 
@@ -133,11 +136,53 @@ def create_scoped_agent(
     backend = file_backend or LocalFileBackend(repo_path)
 
     # Initialize chat model
-    model_kwargs = {}
-    if base_url:
-        model_kwargs["base_url"] = base_url
+    config = Config.from_env()
 
-    model = init_chat_model(model_name, **model_kwargs)
+    # Auto-detect if we should use LiteLLM
+    should_use_litellm = use_litellm or base_url is not None or config.llm_provider == "litellm"
+
+    # Resolve API key if not explicitly provided
+    if not api_key:
+        from ..llm.provider import _resolve_api_key_for_model
+        api_key = _resolve_api_key_for_model(model_name, config)
+
+    if should_use_litellm:
+        # Use ChatLiteLLM for custom gateways
+        from langchain_litellm import ChatLiteLLM
+
+        # Set up kwargs for ChatLiteLLM
+        litellm_kwargs = {
+            "model": model_name,
+            "temperature": 0.0,
+        }
+
+        if api_key:
+            litellm_kwargs["api_key"] = api_key
+        if base_url:
+            litellm_kwargs["api_base"] = base_url
+        if config.max_retries:
+            litellm_kwargs["max_retries"] = config.max_retries
+        if config.timeout:
+            litellm_kwargs["request_timeout"] = config.timeout
+
+        if debug:
+            print(f"[DEBUG] ChatLiteLLM kwargs: {litellm_kwargs}")
+
+        model = ChatLiteLLM(**litellm_kwargs)
+
+        if debug:
+            print(f"[DEBUG] Created ChatLiteLLM for scoped agent with model: {model_name}")
+    else:
+        # Use standard LangChain init_chat_model
+        formatted_model_name = _format_model_name_for_langchain(model_name)
+
+        model_kwargs = {}
+        if base_url:
+            model_kwargs["base_url"] = base_url
+        if api_key:
+            model_kwargs["api_key"] = api_key
+
+        model = init_chat_model(formatted_model_name, **model_kwargs)
 
     # Create file, analysis, and code search tools bound to backend
     file_tools = create_file_tools(backend)

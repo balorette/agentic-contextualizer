@@ -46,6 +46,41 @@ def _extract_repo_from_context(context_path: Path) -> str | None:
     return None
 
 
+def _validate_api_key(config: Config) -> tuple[bool, str]:
+    """Validate that required API key is set for the chosen provider/model.
+
+    Args:
+        config: Application configuration
+
+    Returns:
+        Tuple of (is_valid, error_message). error_message is empty if valid.
+    """
+    # Local models don't need API keys
+    if config.model_name.startswith(("ollama", "lmstudio")):
+        return True, ""
+
+    # For LiteLLM, determine which API key is needed based on model
+    if config.llm_provider == "litellm":
+        if config.model_name.startswith("gpt-") or config.model_name.startswith("o1"):
+            if not config.openai_api_key:
+                return False, "Error: OPENAI_API_KEY not set. Required for OpenAI models with LiteLLM."
+        elif config.model_name.startswith("claude"):
+            if not config.anthropic_api_key:
+                return False, "Error: ANTHROPIC_API_KEY not set. Required for Claude models with LiteLLM."
+        elif config.model_name.startswith(("gemini", "vertex")):
+            if not config.google_api_key:
+                return False, "Error: GOOGLE_API_KEY not set. Required for Google models with LiteLLM."
+        # For other LiteLLM models, we can't determine the key requirement
+        # Let the provider fail with a more specific error if needed
+        return True, ""
+
+    # For direct Anthropic provider
+    if not config.anthropic_api_key and not config.api_key:
+        return False, "Error: ANTHROPIC_API_KEY not set in environment"
+
+    return True, ""
+
+
 @click.group()
 def cli():
     """Agentic Contextualizer - Generate AI-friendly codebase context."""
@@ -94,8 +129,10 @@ def generate(source: str, summary: str, output: str | None, mode: str, provider:
 
     config = Config.from_env(cli_overrides=cli_overrides)
 
-    if not config.api_key:
-        click.echo("Error: ANTHROPIC_API_KEY not set in environment", err=True)
+    # Validate API key for chosen provider/model
+    is_valid, error_msg = _validate_api_key(config)
+    if not is_valid:
+        click.echo(error_msg, err=True)
         return 1
 
     try:
@@ -157,11 +194,16 @@ def _generate_agent_mode(repo: Path, summary: str, config: Config, debug: bool, 
     from .factory import create_contextualizer_agent
     from .memory import create_checkpointer, create_agent_config
     from .observability import configure_tracing, is_tracing_enabled
+    from .tools.repository_tools import set_tool_config
 
     click.echo(f"🤖 Agent mode: Analyzing repository: {repo}")
 
     if stream:
         click.echo("   Streaming: Enabled")
+
+    # Set tool config so tools use the same config as the agent
+    # This ensures CLI flags propagate to tools
+    set_tool_config(config)
 
     # Configure tracing
     configure_tracing()
@@ -169,12 +211,17 @@ def _generate_agent_mode(repo: Path, summary: str, config: Config, debug: bool, 
     # Create checkpointer for state persistence
     checkpointer = create_checkpointer()
 
+    # Resolve API key for the selected model
+    from .llm.provider import _resolve_api_key_for_model
+    api_key = _resolve_api_key_for_model(config.model_name, config)
+
     # Create agent
     agent = create_contextualizer_agent(
-        model_name=config.model_name if config.model_name.startswith("anthropic:") else f"anthropic:{config.model_name}",
+        model_name=config.model_name,
         checkpointer=checkpointer,
         debug=debug,
         base_url=config.api_base_url,
+        api_key=api_key,
     )
 
     # Create agent configuration with thread ID
@@ -272,8 +319,10 @@ def refine(context_file: str, request: str, mode: str, provider: str | None, mod
     context_path = Path(context_file)
     config = Config.from_env(cli_overrides=cli_overrides)
 
-    if not config.api_key:
-        click.echo("Error: ANTHROPIC_API_KEY not set in environment", err=True)
+    # Validate API key for chosen provider/model
+    is_valid, error_msg = _validate_api_key(config)
+    if not is_valid:
+        click.echo(error_msg, err=True)
         return 1
 
     if mode == "agent":
@@ -300,8 +349,12 @@ def _refine_agent_mode(context_path: Path, request: str, config: Config, debug: 
     from .factory import create_contextualizer_agent
     from .memory import create_checkpointer, create_agent_config
     from .observability import configure_tracing, is_tracing_enabled
+    from .tools.repository_tools import set_tool_config
 
     click.echo(f"🤖 Agent mode: Refining context: {context_path}")
+
+    # Set tool config for consistency
+    set_tool_config(config)
 
     if stream:
         click.echo("   Streaming: Enabled")
@@ -316,12 +369,17 @@ def _refine_agent_mode(context_path: Path, request: str, config: Config, debug: 
     # Create checkpointer (same instance will restore previous conversation)
     checkpointer = create_checkpointer()
 
+    # Resolve API key for the selected model
+    from .llm.provider import _resolve_api_key_for_model
+    api_key = _resolve_api_key_for_model(config.model_name, config)
+
     # Create agent
     agent = create_contextualizer_agent(
-        model_name=f"anthropic:{config.model_name}",
+        model_name=config.model_name,
         checkpointer=checkpointer,
         debug=debug,
         base_url=config.api_base_url,
+        api_key=api_key,
     )
 
     # Use same thread ID as generation (based on repo path)
@@ -428,8 +486,10 @@ def scope(source: str, question: str, output: str | None, mode: str, provider: s
 
     config = Config.from_env(cli_overrides=cli_overrides)
 
-    if not config.api_key:
-        click.echo("Error: ANTHROPIC_API_KEY not set in environment", err=True)
+    # Validate API key for chosen provider/model
+    is_valid, error_msg = _validate_api_key(config)
+    if not is_valid:
+        click.echo(error_msg, err=True)
         return 1
 
     # Context files are handled directly (no resolve_repo needed)
@@ -562,6 +622,10 @@ def _scope_agent_mode(
     """Generate scoped context using agent mode with dedicated scoped agent."""
     from .scoper import create_scoped_agent
     from .memory import create_checkpointer, create_agent_config
+    from .tools.repository_tools import set_tool_config
+
+    # Set tool config for consistency
+    set_tool_config(config)
     from .observability import configure_tracing, is_tracing_enabled
 
     click.echo(f"🤖 Agent mode: Scoping '{question}'")
@@ -587,14 +651,18 @@ def _scope_agent_mode(
     # Create checkpointer
     checkpointer = create_checkpointer()
 
+    # Resolve API key for the selected model
+    from .llm.provider import _resolve_api_key_for_model
+    api_key = _resolve_api_key_for_model(config.model_name, config)
+
     # Create scoped agent with dedicated tools
-    model_name = config.model_name if config.model_name.startswith("anthropic:") else f"anthropic:{config.model_name}"
     agent = create_scoped_agent(
         repo_path=repo_path,
-        model_name=model_name,
+        model_name=config.model_name,
         checkpointer=checkpointer,
         output_dir=config.output_dir,
         debug=debug,
+        api_key=api_key,
         base_url=config.api_base_url,
     )
 

@@ -99,7 +99,7 @@ class LiteLLMProvider(LLMProvider):
     ) -> BaseModel:
         """Generate structured output using Pydantic schema.
 
-        Uses LiteLLM's response_format for providers that support it,
+        Uses provider-specific structured output when available,
         falls back to JSON mode + parsing for others.
 
         Args:
@@ -120,7 +120,11 @@ class LiteLLMProvider(LLMProvider):
         messages = []
         if system:
             messages.append({"role": "system", "content": system})
-        messages.append({"role": "user", "content": prompt})
+
+        # Add schema instructions to the prompt for better JSON mode results
+        schema_json = schema.model_json_schema()
+        enhanced_prompt = f"{prompt}\n\nRespond with a JSON object matching this schema:\n{schema_json}"
+        messages.append({"role": "user", "content": enhanced_prompt})
 
         try:
             kwargs = {
@@ -135,18 +139,20 @@ class LiteLLMProvider(LLMProvider):
             if self.base_url:
                 kwargs["api_base"] = self.base_url
 
-            # Try structured output if provider supports it
-            try:
-                kwargs["response_format"] = schema
-                response = litellm.completion(**kwargs)
-                return response
-            except (NotImplementedError, AttributeError):
-                # Fall back to JSON mode + parsing
-                kwargs["response_format"] = {"type": "json_object"}
-                response = litellm.completion(**kwargs)
-                import json
-                data = json.loads(response.choices[0].message.content)
-                return schema(**data)
+            # Use JSON mode for broad compatibility
+            # This works across OpenAI, Anthropic, and most other providers
+            kwargs["response_format"] = {"type": "json_object"}
+            response = litellm.completion(**kwargs)
 
+            # Parse the JSON response and validate against schema
+            import json
+            content = response.choices[0].message.content
+            data = json.loads(content)
+            return schema(**data)
+
+        except json.JSONDecodeError as e:
+            raise RuntimeError(
+                f"Failed to parse JSON response: {str(e)}\nContent: {content}"
+            ) from e
         except Exception as e:
             raise RuntimeError(f"Structured generation failed: {str(e)}") from e

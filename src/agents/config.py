@@ -71,11 +71,14 @@ class Config(BaseModel):
 
         output_dir_env = os.getenv("OUTPUT_DIR")
 
+        # Read base URL with fallback for backward compatibility
+        base_url = os.getenv("LLM_BASE_URL") or os.getenv("ANTHROPIC_BASE_URL")
+
         config_dict = {
             "llm_provider": os.getenv("LLM_PROVIDER", "anthropic"),
             "model_name": os.getenv("MODEL_NAME", "claude-3-5-sonnet-20241022"),
             "api_key": os.getenv("ANTHROPIC_API_KEY"),
-            "api_base_url": os.getenv("ANTHROPIC_BASE_URL"),
+            "api_base_url": base_url,
 
             # Provider-specific keys
             "anthropic_api_key": os.getenv("ANTHROPIC_API_KEY"),

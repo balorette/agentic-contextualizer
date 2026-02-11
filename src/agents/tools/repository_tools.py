@@ -2,6 +2,7 @@
 
 from pathlib import Path
 from typing import Any
+from contextvars import ContextVar
 from langchain_core.tools import tool
 
 from ..config import Config
@@ -12,29 +13,69 @@ from ..generator.context_generator import ContextGenerator
 from ..llm.provider import LLMProvider, create_llm_provider
 from ..models import ProjectMetadata, CodeAnalysis
 
-# Module-level initialization (shared across tool calls for efficiency)
-_config = Config.from_env()
-_scanner = StructureScanner(_config)
-_metadata_extractor = MetadataExtractor()
+# Context variable for runtime config (set by agent invocation)
+# This allows CLI flags to propagate to tools without breaking tool signatures
+_tool_config: ContextVar[Config] = ContextVar('tool_config', default=None)
+
+# Fallback config (used if context var not set)
+_default_config = Config.from_env()
+
+
+def set_tool_config(config: Config) -> None:
+    """Set the config to be used by tools in this context.
+
+    This should be called before invoking the agent to ensure tools
+    use the correct configuration (including CLI overrides).
+
+    Args:
+        config: Configuration instance with all settings
+    """
+    _tool_config.set(config)
+
+
+def _get_config() -> Config:
+    """Get current config from context or fallback to default.
+
+    Returns:
+        Configuration instance
+    """
+    config = _tool_config.get(None)
+    if config is None:
+        # Fallback to default config if not set
+        # This maintains backward compatibility
+        return _default_config
+    return config
 
 
 def _get_llm_provider() -> LLMProvider:
-    """Get LLM provider instance from config.
+    """Get LLM provider instance from current config.
 
     Returns:
         Configured LLM provider
     """
-    return create_llm_provider(_config)
+    config = _get_config()
+    return create_llm_provider(config)
+
+
+def _get_scanner() -> StructureScanner:
+    """Get StructureScanner instance from current config.
+
+    Returns:
+        Configured scanner
+    """
+    config = _get_config()
+    return StructureScanner(config)
 
 
 def _get_context_generator() -> ContextGenerator:
-    """Get ContextGenerator instance.
+    """Get ContextGenerator instance from current config.
 
     Returns:
         Configured context generator
     """
-    llm = _get_llm_provider()
-    return ContextGenerator(llm, _config.output_dir)
+    config = _get_config()
+    llm = create_llm_provider(config)
+    return ContextGenerator(llm, config.output_dir)
 
 
 @tool
@@ -57,7 +98,8 @@ def scan_structure(repo_path: str) -> dict[str, Any]:
         - error: Error message if scan failed
     """
     try:
-        result = _scanner.scan(Path(repo_path))
+        scanner = _get_scanner()
+        result = scanner.scan(Path(repo_path))
         return {
             "tree": result["tree"],
             "all_files": result["all_files"][:100],  # Limit to avoid token overflow
@@ -88,7 +130,9 @@ def extract_metadata(repo_path: str) -> dict[str, Any]:
         - error: Error message if extraction failed
     """
     try:
-        metadata = _metadata_extractor.extract(Path(repo_path))
+        # MetadataExtractor is stateless, can be instantiated per call
+        extractor = MetadataExtractor()
+        metadata = extractor.extract(Path(repo_path))
         return {
             "project_type": metadata.project_type,
             "dependencies": dict(list(metadata.dependencies.items())[:20]),  # Limit for tokens
@@ -174,6 +218,8 @@ def generate_context(
         - error: Error message if generation failed
     """
     try:
+        config = _get_config()
+
         # Reconstruct models from dicts
         metadata = ProjectMetadata(
             name=Path(repo_path).name,
@@ -192,7 +238,7 @@ def generate_context(
         )
 
         generator = _get_context_generator()
-        output_path = generator.generate(metadata, analysis, user_summary, _config.model_name)
+        output_path = generator.generate(metadata, analysis, user_summary, config.model_name)
 
         # Read generated content for confirmation
         content = output_path.read_text(encoding="utf-8")
