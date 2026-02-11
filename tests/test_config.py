@@ -36,3 +36,17 @@ def test_config_from_env_provider_keys(monkeypatch):
     assert config.model_name == "gpt-4o"
     assert config.openai_api_key == "sk-test-openai"
     assert config.google_api_key == "test-google-key"
+
+
+def test_config_cli_overrides(monkeypatch):
+    """Test CLI overrides take precedence over env vars."""
+    monkeypatch.setenv("LLM_PROVIDER", "anthropic")
+    monkeypatch.setenv("MODEL_NAME", "claude-3-5-sonnet-20241022")
+
+    config = Config.from_env(cli_overrides={
+        "llm_provider": "litellm",
+        "model_name": "gpt-4o",
+    })
+
+    assert config.llm_provider == "litellm"
+    assert config.model_name == "gpt-4o"

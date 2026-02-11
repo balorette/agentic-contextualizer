@@ -47,8 +47,15 @@ class Config(BaseModel):
     output_dir: Path = Field(default=Path("contexts"))
 
     @classmethod
-    def from_env(cls) -> "Config":
-        """Load configuration from environment variables."""
+    def from_env(cls, cli_overrides: Optional[dict] = None) -> "Config":
+        """Load configuration from environment variables with optional CLI overrides.
+
+        Args:
+            cli_overrides: Dict of config fields to override (from CLI flags)
+
+        Returns:
+            Config instance with merged settings
+        """
         def _parse_int(value: Optional[str], fallback: int) -> int:
             try:
                 return int(value) if value is not None else fallback
@@ -81,5 +88,9 @@ class Config(BaseModel):
             "ignored_dirs": ignored_dirs,
             "output_dir": Path(output_dir_env) if output_dir_env else Path("contexts"),
         }
+
+        # Apply CLI overrides
+        if cli_overrides:
+            config_dict.update({k: v for k, v in cli_overrides.items() if v is not None})
 
         return cls(**config_dict)
