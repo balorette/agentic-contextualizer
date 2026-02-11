@@ -77,3 +77,25 @@ def test_litellm_provider_generate(mocker):
     assert call_kwargs["messages"][0]["content"] == "Test system"
     assert call_kwargs["messages"][1]["role"] == "user"
     assert call_kwargs["messages"][1]["content"] == "Test prompt"
+
+
+def test_litellm_provider_auth_error(mocker):
+    """Test LiteLLMProvider handles auth errors with clear messages."""
+    import litellm
+
+    mocker.patch(
+        "litellm.completion",
+        side_effect=litellm.AuthenticationError(
+            message="Invalid API key",
+            llm_provider="openai",
+            model="gpt-4o"
+        )
+    )
+
+    provider = LiteLLMProvider(model_name="gpt-4o", api_key="bad-key")
+
+    with pytest.raises(RuntimeError) as exc_info:
+        provider.generate("Test")
+
+    assert "OpenAI authentication failed" in str(exc_info.value)
+    assert "OPENAI_API_KEY" in str(exc_info.value)

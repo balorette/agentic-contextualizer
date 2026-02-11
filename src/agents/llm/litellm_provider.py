@@ -70,8 +70,29 @@ class LiteLLMProvider(LLMProvider):
                 model=self.model_name,
                 tokens_used=response.usage.total_tokens if hasattr(response, "usage") else None,
             )
+        except litellm.AuthenticationError as e:
+            provider = self._detect_provider(self.model_name)
+            raise RuntimeError(
+                f"{provider} authentication failed. "
+                f"Set {provider.upper()}_API_KEY in your .env file"
+            ) from e
+        except litellm.RateLimitError as e:
+            raise RuntimeError(f"Rate limit exceeded for {self.model_name}") from e
         except Exception as e:
             raise RuntimeError(f"LLM generation failed: {str(e)}") from e
+
+    def _detect_provider(self, model_name: str) -> str:
+        """Detect provider from model name for error messages."""
+        if model_name.startswith("gpt-") or model_name.startswith("o1"):
+            return "OpenAI"
+        elif model_name.startswith("claude"):
+            return "Anthropic"
+        elif model_name.startswith("gemini"):
+            return "Google"
+        elif model_name.startswith("ollama"):
+            return "Ollama"
+        else:
+            return "LLM Provider"
 
     def generate_structured(
         self, prompt: str, system: Optional[str] = None, schema: Type[BaseModel] = None
