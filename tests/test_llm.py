@@ -99,3 +99,38 @@ def test_litellm_provider_auth_error(mocker):
 
     assert "OpenAI authentication failed" in str(exc_info.value)
     assert "OPENAI_API_KEY" in str(exc_info.value)
+
+
+def test_litellm_provider_generate_structured(mocker):
+    """Test LiteLLMProvider.generate_structured() with JSON fallback."""
+    import json
+    from pydantic import BaseModel
+
+    class TestSchema(BaseModel):
+        name: str
+        count: int
+
+    # Mock to simulate fallback to JSON mode
+    call_count = [0]
+
+    def mock_completion(**kwargs):
+        call_count[0] += 1
+        if call_count[0] == 1:
+            # First call with response_format=schema raises NotImplementedError
+            raise NotImplementedError("Structured output not supported")
+        else:
+            # Second call with JSON mode returns JSON string
+            mock_response = mocker.Mock()
+            mock_response.choices = [
+                mocker.Mock(message=mocker.Mock(content='{"name": "test", "count": 42}'))
+            ]
+            return mock_response
+
+    mocker.patch("litellm.completion", side_effect=mock_completion)
+
+    provider = LiteLLMProvider(model_name="gpt-4o", api_key="test-key")
+    result = provider.generate_structured("Generate data", schema=TestSchema)
+
+    assert isinstance(result, TestSchema)
+    assert result.name == "test"
+    assert result.count == 42
