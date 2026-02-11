@@ -268,7 +268,7 @@ def _refine_pipeline_mode(context_path: Path, request: str, config: Config) -> i
     """Refine context using deterministic pipeline mode."""
     click.echo(f"🔄 Refining: {context_path}")
 
-    llm = AnthropicProvider(config.model_name, config.api_key, base_url=config.api_base_url)
+    llm = create_llm_provider(config)
     generator = ContextGenerator(llm, config.output_dir)
 
     updated_path = generator.refine(context_path, request)
@@ -491,7 +491,7 @@ def _scope_pipeline_mode(
 
     # Phase 2: LLM-guided exploration
     click.echo(f"\n🤖 Phase 2: Exploration with {config.model_name}...")
-    llm = AnthropicProvider(config.model_name, config.api_key, base_url=config.api_base_url)
+    llm = create_llm_provider(config)
     analyzer = ScopedAnalyzer(llm)
 
     analysis_result = analyzer.analyze(
