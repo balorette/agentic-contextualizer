@@ -4,6 +4,7 @@ import os
 import pytest
 from agents.llm.provider import AnthropicProvider, LLMResponse
 from agents.config import Config
+from src.agents.llm.litellm_provider import LiteLLMProvider
 
 
 def test_anthropic_provider_initialization(config):
@@ -33,3 +34,20 @@ def test_anthropic_provider_generate():
     assert isinstance(response, LLMResponse)
     assert "Hello" in response.content
     assert response.model == config.model_name
+
+
+def test_litellm_provider_init():
+    """Test LiteLLMProvider initialization stores config."""
+    provider = LiteLLMProvider(
+        model_name="gpt-4o",
+        api_key="test-key",
+        base_url="https://custom.api",
+        max_retries=5,
+        timeout=120,
+    )
+
+    assert provider.model_name == "gpt-4o"
+    assert provider.api_key == "test-key"
+    assert provider.base_url == "https://custom.api"
+    assert provider.max_retries == 5
+    assert provider.timeout == 120
