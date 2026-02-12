@@ -78,31 +78,38 @@ def _get_context_generator() -> ContextGenerator:
     return ContextGenerator(llm, config.output_dir)
 
 
+def _flatten_tree(node: dict, prefix: str = "") -> list[str]:
+    """Flatten nested tree dict into a compact list of paths."""
+    paths = []
+    name = node.get("name", "")
+    path = f"{prefix}/{name}" if prefix else name
+    if node.get("type") == "file":
+        paths.append(path)
+    elif node.get("type") == "directory":
+        for child in node.get("children", []):
+            paths.extend(_flatten_tree(child, path))
+    return paths
+
+
 @tool
 def scan_structure(repo_path: str) -> dict[str, Any]:
-    """Scan repository structure and identify key files.
-
-    Use this tool to get a complete overview of the repository's file structure,
-    including directory tree, file counts, and all file paths. This is typically
-    the first step in analyzing a repository.
+    """Scan repository structure. Returns a flat file listing, file counts, and directory counts.
 
     Args:
         repo_path: Absolute path to the repository root directory
 
     Returns:
-        Dictionary containing:
-        - tree: Nested directory structure
-        - all_files: List of all file paths (limited to first 100 for efficiency)
-        - total_files: Total count of files
-        - total_dirs: Total count of directories
-        - error: Error message if scan failed
+        Dictionary with file_list, total_files, total_dirs, or error.
     """
     try:
+        config = _get_config()
         scanner = _get_scanner()
         result = scanner.scan(Path(repo_path))
+        # Flatten tree to compact list of relative paths (saves ~80% tokens vs nested JSON)
+        flat_files = _flatten_tree(result["tree"])
+        limit = config.max_scan_files
         return {
-            "tree": result["tree"],
-            "all_files": result["all_files"][:100],  # Limit to avoid token overflow
+            "file_list": flat_files[:limit],
             "total_files": result["total_files"],
             "total_dirs": result["total_dirs"],
         }
@@ -112,22 +119,13 @@ def scan_structure(repo_path: str) -> dict[str, Any]:
 
 @tool
 def extract_metadata(repo_path: str) -> dict[str, Any]:
-    """Extract project metadata from configuration files.
-
-    Analyzes package.json, pyproject.toml, Cargo.toml, and other config files
-    to determine project type, dependencies, entry points, and key files.
-    Call this after scan_structure to get project-specific information.
+    """Extract project type, dependencies, entry points from config files.
 
     Args:
         repo_path: Absolute path to the repository root directory
 
     Returns:
-        Dictionary containing:
-        - project_type: Detected type (python, node, rust, go, java, or None)
-        - dependencies: Dictionary of dependency name -> version (limited to 20)
-        - entry_points: List of identified entry point files
-        - key_files: List of important configuration files (limited to 20)
-        - error: Error message if extraction failed
+        Dictionary with project_type, dependencies, entry_points, key_files, or error.
     """
     try:
         # MetadataExtractor is stateless, can be instantiated per call
@@ -145,27 +143,18 @@ def extract_metadata(repo_path: str) -> dict[str, Any]:
 
 @tool
 def analyze_code(
-    repo_path: str, user_summary: str, metadata_dict: dict[str, Any], file_tree: dict[str, Any]
+    repo_path: str, user_summary: str, metadata_dict: dict[str, Any], file_list: list[str]
 ) -> dict[str, Any]:
-    """Analyze code using LLM to extract architectural insights.
-
-    This tool performs deep code analysis using an LLM to identify architecture
-    patterns, coding conventions, tech stack, and generate insights. This is
-    an expensive operation (LLM call). Call after extract_metadata.
+    """Analyze code using LLM for architectural insights. Expensive (LLM call).
 
     Args:
         repo_path: Absolute path to the repository root directory
         user_summary: User's description of what the project does
         metadata_dict: Output from extract_metadata tool
-        file_tree: Output from scan_structure tool (the 'tree' field)
+        file_list: List of file paths from scan_structure's file_list field
 
     Returns:
-        Dictionary containing:
-        - architecture_patterns: List of identified patterns (e.g., "MVC", "Microservices")
-        - coding_conventions: Dictionary of convention type -> description
-        - tech_stack: List of technologies and frameworks used
-        - insights: Additional insights about the codebase
-        - error: Error message if analysis failed
+        Dictionary with architecture_patterns, coding_conventions, tech_stack, insights, or error.
     """
     try:
         # Reconstruct ProjectMetadata from dict
@@ -178,9 +167,14 @@ def analyze_code(
             key_files=metadata_dict.get("key_files", []),
         )
 
+        # Build a simple tree dict from flat file list for the analyzer
+        tree = {"name": Path(repo_path).name, "type": "directory", "children": []}
+        for fp in file_list:
+            tree["children"].append({"name": fp, "type": "file"})
+
         llm = _get_llm_provider()
         analyzer = CodeAnalyzer(llm)
-        analysis = analyzer.analyze(Path(repo_path), metadata, file_tree, user_summary)
+        analysis = analyzer.analyze(Path(repo_path), metadata, tree, user_summary)
 
         return {
             "architecture_patterns": analysis.architecture_patterns,
@@ -199,11 +193,7 @@ def generate_context(
     metadata_dict: dict[str, Any],
     analysis_dict: dict[str, Any],
 ) -> dict[str, Any]:
-    """Generate final context markdown file.
-
-    Synthesizes all gathered information (metadata + analysis) into a
-    comprehensive markdown context file with YAML frontmatter. This performs
-    an LLM call to generate the final documentation. Call after analyze_code.
+    """Generate final context markdown file. Expensive (LLM call). Call after analyze_code.
 
     Args:
         repo_path: Absolute path to the repository root directory
@@ -212,10 +202,7 @@ def generate_context(
         analysis_dict: Output from analyze_code tool
 
     Returns:
-        Dictionary containing:
-        - context_md: Generated markdown content (truncated preview)
-        - output_path: Path where context file was saved
-        - error: Error message if generation failed
+        Dictionary with context_md preview, output_path, or error.
     """
     try:
         config = _get_config()
@@ -253,21 +240,14 @@ def generate_context(
 
 @tool
 def refine_context(context_file_path: str, refinement_request: str) -> dict[str, Any]:
-    """Refine an existing context file based on user feedback.
-
-    Updates an existing context markdown file with requested changes.
-    Performs an LLM call to intelligently update the content while
-    preserving structure and other information.
+    """Refine an existing context file. Expensive (LLM call).
 
     Args:
         context_file_path: Absolute path to the existing context.md file
         refinement_request: Description of what to change or add
 
     Returns:
-        Dictionary containing:
-        - updated_context: Preview of updated markdown content
-        - output_path: Path where updated context was saved
-        - error: Error message if refinement failed
+        Dictionary with updated_context preview, output_path, or error.
     """
     try:
         generator = _get_context_generator()

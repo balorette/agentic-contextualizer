@@ -1,5 +1,6 @@
 """LiteLLM provider for multi-provider LLM support."""
 
+import json
 from typing import Optional, Type
 from pydantic import BaseModel
 import litellm
@@ -16,21 +17,14 @@ class LiteLLMProvider(LLMProvider):
         base_url: Optional[str] = None,
         max_retries: int = 3,
         timeout: int = 60,
+        max_output_tokens: Optional[int] = None,
     ):
-        """Initialize LiteLLM provider.
-
-        Args:
-            model_name: LiteLLM model identifier (e.g., gpt-4o, claude-3-5-sonnet-20241022)
-            api_key: API key for the provider (optional for local models)
-            base_url: Custom API endpoint URL (maps to api_base)
-            max_retries: Maximum retry attempts
-            timeout: Request timeout in seconds
-        """
         self.model_name = model_name
         self.api_key = api_key
         self.base_url = base_url
         self.max_retries = max_retries
         self.timeout = timeout
+        self.max_output_tokens = max_output_tokens
 
     def generate(self, prompt: str, system: Optional[str] = None) -> LLMResponse:
         """Generate response using LiteLLM.
@@ -62,6 +56,8 @@ class LiteLLMProvider(LLMProvider):
                 kwargs["api_key"] = self.api_key
             if self.base_url:
                 kwargs["api_base"] = self.base_url
+            if self.max_output_tokens:
+                kwargs["max_tokens"] = self.max_output_tokens
 
             response = litellm.completion(**kwargs)
 
@@ -138,6 +134,8 @@ class LiteLLMProvider(LLMProvider):
                 kwargs["api_key"] = self.api_key
             if self.base_url:
                 kwargs["api_base"] = self.base_url
+            if self.max_output_tokens:
+                kwargs["max_tokens"] = self.max_output_tokens
 
             # Use JSON mode for broad compatibility
             # This works across OpenAI, Anthropic, and most other providers
@@ -145,7 +143,6 @@ class LiteLLMProvider(LLMProvider):
             response = litellm.completion(**kwargs)
 
             # Parse the JSON response and validate against schema
-            import json
             content = response.choices[0].message.content
             data = json.loads(content)
             return schema(**data)

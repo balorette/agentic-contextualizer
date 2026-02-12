@@ -165,7 +165,9 @@ def test_legacy_config_still_works(monkeypatch):
     """Test that old .env files work unchanged."""
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
     monkeypatch.setenv("MODEL_NAME", "claude-3-5-sonnet-20241022")
-    # Don't set LLM_PROVIDER - should default to anthropic
+    # Clear LLM_PROVIDER so it defaults to anthropic (real .env may set it)
+    monkeypatch.delenv("LLM_PROVIDER", raising=False)
+    monkeypatch.delenv("LLM_BASE_URL", raising=False)
 
     config = Config.from_env()
     provider = create_llm_provider(config)

@@ -182,7 +182,7 @@ class TestAgentErrorHandling:
         result = analyze_code.invoke({
             "repo_path": str(repo),
             "user_summary": "Test",
-            "file_tree": {"name": "root", "type": "directory", "children": []},
+            "file_list": [],
             "metadata_dict": {
                 "project_type": "python",
                 "dependencies": [],
@@ -280,7 +280,7 @@ class TestAgentToolIntegration:
 
         # Should succeed
         assert "error" not in scan_result
-        assert "tree" in scan_result
+        assert "file_list" in scan_result
 
         # Extract metadata (uses repo_path directly, not scan result)
         metadata_result = extract_metadata.invoke({"repo_path": str(repo)})

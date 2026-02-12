@@ -347,19 +347,23 @@ class TestCLIErrorHandling:
         repo = tmp_path / "repo"
         repo.mkdir()
 
-        # Mock config with no API key
+        # Mock config with no API key - must set all fields _validate_api_key checks
         config_instance = Mock()
         config_instance.api_key = None
+        config_instance.anthropic_api_key = None
+        config_instance.openai_api_key = None
+        config_instance.google_api_key = None
+        config_instance.model_name = "claude-3-5-sonnet-20241022"
+        config_instance.llm_provider = "anthropic"
+        config_instance.api_base_url = None
         mock_config.return_value = config_instance
 
-        # Ensure pipeline mode isn't called if API key check fails
         mock_pipeline.return_value = 0
 
         result = runner.invoke(
             cli, ["generate", str(repo), "-s", "Test"]
         )
 
-        # Check for error message (exit code may vary based on Click version)
         assert "ANTHROPIC_API_KEY not set" in result.output or result.exit_code == 1
 
     @patch("src.agents.config.Config.from_env")

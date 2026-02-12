@@ -9,21 +9,13 @@ from .file import KEY_FILE_PATTERNS
 
 @tool
 def list_key_files(file_tree: dict[str, Any]) -> dict[str, list[str]]:
-    """List important files from a file tree structure.
-
-    Identifies and categorizes key files like configuration files, entry points,
-    and documentation from a repository file tree. Useful for quick navigation
-    and understanding project structure.
+    """Categorize key files (configs, entry_points, docs) from a file tree structure.
 
     Args:
         file_tree: File tree dictionary from scan_structure tool
 
     Returns:
-        Dictionary with categorized lists:
-        - configs: Configuration files
-        - entry_points: Main entry point files
-        - docs: Documentation files
-        - all_key_files: Combined list of all key files found
+        Dictionary with configs, entry_points, docs, and all_key_files lists.
     """
     found_files = {
         "configs": [],
@@ -65,25 +57,15 @@ def list_key_files(file_tree: dict[str, Any]) -> dict[str, list[str]]:
 
 @tool
 def read_file_snippet(file_path: str, start_line: int = 0, num_lines: int = 50) -> dict[str, Any]:
-    """Read a snippet from a specific file.
-
-    Reads a portion of a file's content, useful for examining specific sections
-    without loading entire large files. Supports line-based reading with
-    start position and length control.
+    """Read lines from a file. Returns content, line range, and total_lines.
 
     Args:
         file_path: Absolute path to the file to read
-        start_line: Line number to start reading from (0-indexed, default: 0)
+        start_line: Line number to start from (0-indexed, default: 0)
         num_lines: Number of lines to read (default: 50, max: 500)
 
     Returns:
-        Dictionary containing:
-        - content: The file content snippet
-        - start_line: Starting line number (0-indexed)
-        - end_line: Ending line number (0-indexed)
-        - total_lines: Total number of lines in the file
-        - file_path: Path to the file that was read
-        - error: Error message if read failed
+        Dictionary with content, start_line, end_line, total_lines, file_path, or error.
     """
     try:
         path = Path(file_path)

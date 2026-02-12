@@ -39,6 +39,16 @@ class Config(BaseModel):
     max_retries: int = Field(default=3)
     timeout: int = Field(default=60)
 
+    # Rate Limiting
+    rate_limit_rps: float = Field(default=0.3)
+    rate_limit_burst: int = Field(default=3)
+
+    # Token Budget
+    max_output_tokens: Optional[int] = Field(default=4096)
+    max_input_tokens: Optional[int] = Field(default=None)
+    max_tool_output_chars: int = Field(default=12000)
+    max_scan_files: int = Field(default=200)
+
     # Scanner Settings
     max_file_size: int = Field(default=1_000_000)  # 1MB
     ignored_dirs: list[str] = Field(default_factory=lambda: DEFAULT_IGNORED_DIRS.copy())
@@ -59,6 +69,12 @@ class Config(BaseModel):
         def _parse_int(value: Optional[str], fallback: int) -> int:
             try:
                 return int(value) if value is not None else fallback
+            except ValueError:
+                return fallback
+
+        def _parse_float(value: Optional[str], fallback: float) -> float:
+            try:
+                return float(value) if value is not None else fallback
             except ValueError:
                 return fallback
 
@@ -87,6 +103,12 @@ class Config(BaseModel):
 
             "max_retries": _parse_int(os.getenv("LLM_MAX_RETRIES"), 3),
             "timeout": _parse_int(os.getenv("LLM_TIMEOUT"), 60),
+            "rate_limit_rps": _parse_float(os.getenv("RATE_LIMIT_RPS"), 0.3),
+            "rate_limit_burst": _parse_int(os.getenv("RATE_LIMIT_BURST"), 3),
+            "max_output_tokens": _parse_int(os.getenv("LLM_MAX_OUTPUT_TOKENS"), 4096),
+            "max_input_tokens": _parse_int(os.getenv("LLM_MAX_INPUT_TOKENS"), None) if os.getenv("LLM_MAX_INPUT_TOKENS") else None,
+            "max_tool_output_chars": _parse_int(os.getenv("MAX_TOOL_OUTPUT_CHARS"), 12000),
+            "max_scan_files": _parse_int(os.getenv("MAX_SCAN_FILES"), 200),
             "max_file_size": _parse_int(os.getenv("MAX_FILE_SIZE"), 1_000_000),
             "ignored_dirs": ignored_dirs,
             "output_dir": Path(output_dir_env) if output_dir_env else Path("contexts"),

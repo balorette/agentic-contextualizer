@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Optional
 from langchain.agents import create_agent
 from langchain.chat_models import init_chat_model
+from langchain_core.rate_limiters import InMemoryRateLimiter
 from langchain_core.tools import tool
 
 from ..tools import (
@@ -150,10 +151,18 @@ def create_scoped_agent(
         # Use ChatLiteLLM for custom gateways
         from langchain_litellm import ChatLiteLLM
 
+        # Rate limiter — tunable via RATE_LIMIT_RPS and RATE_LIMIT_BURST in .env
+        rate_limiter = InMemoryRateLimiter(
+            requests_per_second=config.rate_limit_rps,
+            check_every_n_seconds=0.1,
+            max_bucket_size=config.rate_limit_burst,
+        )
+
         # Set up kwargs for ChatLiteLLM
         litellm_kwargs = {
             "model": model_name,
             "temperature": 0.0,
+            "rate_limiter": rate_limiter,
         }
 
         if api_key:
@@ -164,9 +173,11 @@ def create_scoped_agent(
             litellm_kwargs["max_retries"] = config.max_retries
         if config.timeout:
             litellm_kwargs["request_timeout"] = config.timeout
+        if config.max_output_tokens:
+            litellm_kwargs["max_tokens"] = config.max_output_tokens
 
         if debug:
-            print(f"[DEBUG] ChatLiteLLM kwargs: {litellm_kwargs}")
+            print(f"[DEBUG] ChatLiteLLM kwargs (rate_limiter=configured): {model_name}")
 
         model = ChatLiteLLM(**litellm_kwargs)
 
@@ -257,12 +268,19 @@ def create_scoped_agent(
     # Combine all tools
     tools = file_tools + analysis_tools + code_search_tools + [generate_scoped_context]
 
+    # Token budget middleware
+    from ..middleware.token_budget import TokenBudgetMiddleware
+    budget_mw = TokenBudgetMiddleware(
+        max_input_tokens=config.max_input_tokens,
+        max_tool_output_chars=config.max_tool_output_chars,
+    )
+
     # Create agent
     agent = create_agent(
         model=model,
         tools=tools,
         system_prompt=SCOPED_AGENT_SYSTEM_PROMPT,
-        middleware=[],
+        middleware=[budget_mw],
         checkpointer=checkpointer,
         debug=debug,
     )

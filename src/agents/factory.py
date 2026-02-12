@@ -3,6 +3,7 @@
 from typing import Optional
 from langchain.agents import create_agent
 from langchain.chat_models import init_chat_model
+from langchain_core.rate_limiters import InMemoryRateLimiter
 
 from .tools.repository_tools import (
     scan_structure,
@@ -45,79 +46,19 @@ def _format_model_name_for_langchain(model_name: str) -> str:
         return f"anthropic:{model_name}"
 
 
-AGENT_SYSTEM_PROMPT = """You are a repository context generator agent. Your goal is to analyze codebases and produce comprehensive context documentation for AI coding assistants.
+AGENT_SYSTEM_PROMPT = """You are a repository context generator. Analyze codebases and produce context documentation.
 
-## Available Tools
+## Workflow
 
-You have access to the following tools:
+For initial generation, call tools in this order:
+1. scan_structure - get file listing
+2. extract_metadata - get project type, deps, entry points
+3. analyze_code - deep LLM analysis (pass file_list from step 1)
+4. generate_context - produce final markdown
 
-1. **scan_structure** - Scans repository structure, returns file tree and counts
-2. **extract_metadata** - Extracts project type, dependencies, entry points from config files
-3. **analyze_code** - Performs LLM-based deep code analysis (EXPENSIVE - use wisely!)
-4. **generate_context** - Generates final markdown context file (EXPENSIVE - use wisely!)
-5. **refine_context** - Refines an existing context file based on feedback (EXPENSIVE)
-6. **list_key_files** - Quick utility to list important files from a file tree
-7. **read_file_snippet** - Read specific sections of files for targeted analysis
+For refinement: use refine_context with the request.
 
-## Workflow Guidelines
-
-### For Initial Context Generation:
-Follow this sequence:
-1. Use `scan_structure` to get the repository file tree
-2. Use `extract_metadata` to get project details
-3. Use `analyze_code` to perform deep analysis (1 LLM call)
-4. Use `generate_context` to create the final markdown file (1 LLM call)
-
-Total: 2 expensive LLM calls (analyze + generate)
-
-### For Context Refinement:
-1. User provides path to existing context file
-2. Use `refine_context` with the refinement request (1 LLM call)
-
-### Budget Constraints
-
-- **Target**: Keep expensive LLM calls ≤ 2 per generation
-- **Token Limits**: All tools auto-limit output to prevent overflow
-- **Fail Fast**: If repo is oversized (>10k files), report error and suggest focusing on subdirectory
-
-### Error Handling
-
-- If a tool returns an "error" field, report it clearly to the user
-- Suggest recovery actions (e.g., "Repository too large, try scanning a subdirectory")
-- Don't retry failed operations unless explicitly requested
-
-### Output Format
-
-The final context file should be markdown with YAML frontmatter:
-```markdown
----
-source_repo: /path/to/repo
-scan_date: 2025-01-23T10:30:00Z
-user_summary: "User's description"
-model_used: anthropic/claude-sonnet-4-5-20250929
----
-
-# Repository Context: {repo-name}
-
-## Architecture Overview
-...
-
-## Key Commands
-...
-
-## Code Patterns
-...
-
-## Entry Points
-...
-```
-
-## Important Notes
-
-- Always acknowledge the user's summary/description in your analysis
-- Be concise but thorough in generated context
-- If user requests refinement, focus only on requested changes
-- Report the output path when context is generated successfully
+Keep LLM calls ≤ 2. If a tool returns "error", report it. If >10k files, suggest a subdirectory.
 """
 
 
@@ -195,15 +136,21 @@ def create_contextualizer_agent(
 
         # Enable LiteLLM debug mode if debugging
         if debug:
-            litellm.set_verbose = True
-            # Also turn on detailed debugging
             import os
             os.environ["LITELLM_LOG"] = "DEBUG"
+
+        # Rate limiter — tunable via RATE_LIMIT_RPS and RATE_LIMIT_BURST in .env
+        rate_limiter = InMemoryRateLimiter(
+            requests_per_second=config.rate_limit_rps,
+            check_every_n_seconds=0.1,
+            max_bucket_size=config.rate_limit_burst,
+        )
 
         # Set up kwargs for ChatLiteLLM
         litellm_kwargs = {
             "model": model_name,  # LiteLLM handles model names directly
             "temperature": 0.0,
+            "rate_limiter": rate_limiter,
         }
 
         if api_key:
@@ -214,12 +161,16 @@ def create_contextualizer_agent(
             litellm_kwargs["max_retries"] = config.max_retries
         if config.timeout:
             litellm_kwargs["request_timeout"] = config.timeout
+        if config.max_output_tokens:
+            litellm_kwargs["max_tokens"] = config.max_output_tokens
 
         if debug:
             print(f"  - ChatLiteLLM kwargs:")
             for k, v in litellm_kwargs.items():
                 if k == "api_key":
                     print(f"      {k}: ***{v[-4:] if v else 'None'}")
+                elif k == "rate_limiter":
+                    print(f"      {k}: <configured>")
                 else:
                     print(f"      {k}: {v}")
 
@@ -263,12 +214,20 @@ def create_contextualizer_agent(
         read_file_snippet,
     ]
 
+    # Token budget middleware — trims messages and truncates tool output
+    from .middleware.token_budget import TokenBudgetMiddleware
+    budget_mw = TokenBudgetMiddleware(
+        max_input_tokens=config.max_input_tokens,
+        max_tool_output_chars=config.max_tool_output_chars,
+    )
+    all_middleware = [budget_mw] + (middleware or [])
+
     # Create agent with tools and system prompt
     agent = create_agent(
         model=model,
         tools=tools,
         system_prompt=AGENT_SYSTEM_PROMPT,
-        middleware=middleware or [],
+        middleware=all_middleware,
         checkpointer=checkpointer,
         debug=debug,
     )

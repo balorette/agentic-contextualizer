@@ -59,8 +59,17 @@ def _validate_api_key(config: Config) -> tuple[bool, str]:
     if config.model_name.startswith(("ollama", "lmstudio")):
         return True, ""
 
-    # For LiteLLM, determine which API key is needed based on model
+    # When using a custom gateway (base_url), the gateway handles auth.
+    # Any API key (even a gateway token) is sufficient.
     if config.llm_provider == "litellm":
+        if config.api_base_url:
+            # Gateway mode - any key set is fine, the gateway handles routing
+            has_any_key = config.openai_api_key or config.anthropic_api_key or config.api_key
+            if not has_any_key:
+                return False, "Error: No API key set. Set OPENAI_API_KEY or ANTHROPIC_API_KEY for gateway auth."
+            return True, ""
+
+        # Direct LiteLLM (no gateway) - need provider-specific keys
         if config.model_name.startswith("gpt-") or config.model_name.startswith("o1"):
             if not config.openai_api_key:
                 return False, "Error: OPENAI_API_KEY not set. Required for OpenAI models with LiteLLM."
@@ -70,8 +79,6 @@ def _validate_api_key(config: Config) -> tuple[bool, str]:
         elif config.model_name.startswith(("gemini", "vertex")):
             if not config.google_api_key:
                 return False, "Error: GOOGLE_API_KEY not set. Required for Google models with LiteLLM."
-        # For other LiteLLM models, we can't determine the key requirement
-        # Let the provider fail with a more specific error if needed
         return True, ""
 
     # For direct Anthropic provider

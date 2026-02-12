@@ -186,16 +186,16 @@ def _resolve_api_key_for_model(model_name: str, config: "Config") -> Optional[st
         Appropriate API key or None for local models
     """
     if model_name.startswith("gpt-") or model_name.startswith("o1"):
-        return config.openai_api_key
+        return config.openai_api_key or config.api_key
     elif model_name.startswith("claude"):
         return config.anthropic_api_key or config.api_key
     elif model_name.startswith("gemini") or model_name.startswith("vertex"):
-        return config.google_api_key
+        return config.google_api_key or config.api_key
     elif model_name.startswith("ollama") or model_name.startswith("lmstudio"):
         return None  # Local models don't need API keys
     else:
-        # For other providers, return None
-        return None
+        # For gateways or unknown providers, fall back to any available key
+        return config.api_key or config.openai_api_key or config.anthropic_api_key
 
 
 def create_llm_provider(config: "Config") -> LLMProvider:
@@ -219,6 +219,7 @@ def create_llm_provider(config: "Config") -> LLMProvider:
             base_url=config.api_base_url,
             max_retries=config.max_retries,
             timeout=config.timeout,
+            max_output_tokens=config.max_output_tokens,
         )
     else:  # "anthropic" or default
         return AnthropicProvider(
