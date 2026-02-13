@@ -129,6 +129,7 @@ def create_customer_support_agent():
     api_key = (
         os.getenv("OPENAI_API_KEY")
         or os.getenv("ANTHROPIC_API_KEY")
+        or os.getenv("GOOGLE_API_KEY")
         or os.getenv("LLM_API_KEY")
     )
     if not model:
@@ -137,7 +138,7 @@ def create_customer_support_agent():
         raise RuntimeError("Missing required env var: LLM_BASE_URL")
     if api_key is None:
         raise RuntimeError(
-            "Missing required env var: OPENAI_API_KEY, ANTHROPIC_API_KEY, or LLM_API_KEY"
+            "Missing required env var: OPENAI_API_KEY, ANTHROPIC_API_KEY, GOOGLE_API_KEY, or LLM_API_KEY"
         )
 
     verify_ssl = _env_flag("LLM_VERIFY_SSL", default=True)
@@ -146,12 +147,14 @@ def create_customer_support_agent():
     if not verify_ssl:
         import warnings
         import httpx
+        import sys
 
-        warnings.warn(
+        msg = (
             "SSL verification is disabled (LLM_VERIFY_SSL=false). "
-            "This exposes connections to MITM attacks. Only use for local development.",
-            stacklevel=2,
+            "This exposes connections to MITM attacks. Only use for local development."
         )
+        warnings.warn(msg, UserWarning, stacklevel=2)
+        print(f"WARNING: {msg}", file=sys.stderr)
         http_client = httpx.Client(verify=False)
         http_async_client = httpx.AsyncClient(verify=False)
 
