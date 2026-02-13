@@ -138,8 +138,14 @@ def create_customer_support_agent():
     http_client = None
     http_async_client = None
     if not verify_ssl:
+        import warnings
         import httpx
 
+        warnings.warn(
+            "SSL verification is disabled (LLM_VERIFY_SSL=false). "
+            "This exposes connections to MITM attacks. Only use for local development.",
+            stacklevel=2,
+        )
         http_client = httpx.Client(verify=False)
         http_async_client = httpx.AsyncClient(verify=False)
 
