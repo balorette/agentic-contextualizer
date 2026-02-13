@@ -3,9 +3,13 @@
 from __future__ import annotations
 
 import logging
+import random
 import time
 import threading
 from collections import deque
+from dataclasses import dataclass
+from datetime import datetime
+from typing import Any, Callable, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -81,3 +85,106 @@ class TPMThrottle:
             )
             time.sleep(wait_seconds)
             total_waited += wait_seconds
+
+
+class TPMExhaustedError(Exception):
+    """Raised when max retry attempts exhausted on 429s."""
+
+    def __init__(self, message: str, retry_after: Optional[float] = None):
+        super().__init__(message)
+        self.retry_after = retry_after
+
+
+class TokenBudgetExceededError(Exception):
+    """Raised when a single call exceeds max_tokens_per_call."""
+
+    pass
+
+
+@dataclass
+class RateLimitInfo:
+    """Provider-reported rate limit state."""
+
+    input_tokens_remaining: Optional[int] = None
+    output_tokens_remaining: Optional[int] = None
+    reset_at: Optional[datetime] = None
+
+
+class RetryHandler:
+    """Handles 429 retries with exponential backoff and header extraction.
+
+    Backoff schedule: initial_wait * 2^attempt with +/-25% jitter.
+    Respects retry-after header when available.
+    """
+
+    _RATE_LIMIT_KEYWORDS = ("rate limit", "rate_limit", "429", "too many requests")
+
+    def __init__(self, max_attempts: int = 3, initial_wait: float = 2.0):
+        self.max_attempts = max_attempts
+        self.initial_wait = initial_wait
+
+    def _is_rate_limit_error(self, error: Exception) -> bool:
+        """Check if an error is a rate limit error."""
+        msg = str(error).lower()
+        return any(kw in msg for kw in self._RATE_LIMIT_KEYWORDS)
+
+    def execute_with_retry(self, fn: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+        """Call fn, retrying on rate limit errors with exponential backoff."""
+        last_error: Optional[Exception] = None
+        for attempt in range(self.max_attempts):
+            try:
+                return fn(*args, **kwargs)
+            except Exception as e:
+                if not self._is_rate_limit_error(e):
+                    raise
+                last_error = e
+                if attempt + 1 >= self.max_attempts:
+                    break
+                wait = self.initial_wait * (2 ** attempt)
+                jitter = wait * 0.25 * (2 * random.random() - 1)
+                wait = max(0.01, wait + jitter)
+                logger.warning(
+                    "Rate limited by provider. Retry %d/%d in %.1fs",
+                    attempt + 1,
+                    self.max_attempts,
+                    wait,
+                )
+                time.sleep(wait)
+
+        raise TPMExhaustedError(
+            f"Rate limit: {self.max_attempts}/{self.max_attempts} retries exhausted. "
+            f"Last error: {last_error}",
+        )
+
+    def extract_rate_limit_info(self, headers: dict) -> Optional[RateLimitInfo]:
+        """Extract rate limit info from response headers.
+
+        Supports Anthropic and OpenAI header formats.
+        Returns None for unrecognized providers.
+        """
+        # Anthropic headers
+        if "anthropic-ratelimit-input-tokens-remaining" in headers:
+            reset_at = None
+            reset_str = headers.get("anthropic-ratelimit-input-tokens-reset")
+            if reset_str:
+                try:
+                    reset_at = datetime.fromisoformat(reset_str)
+                except ValueError:
+                    pass
+            return RateLimitInfo(
+                input_tokens_remaining=int(
+                    headers["anthropic-ratelimit-input-tokens-remaining"]
+                ),
+                output_tokens_remaining=int(
+                    headers.get("anthropic-ratelimit-output-tokens-remaining", 0)
+                ) or None,
+                reset_at=reset_at,
+            )
+
+        # OpenAI headers
+        if "x-ratelimit-remaining-tokens" in headers:
+            return RateLimitInfo(
+                input_tokens_remaining=int(headers["x-ratelimit-remaining-tokens"]),
+            )
+
+        return None

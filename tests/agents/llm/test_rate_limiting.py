@@ -72,3 +72,78 @@ class TestTPMThrottle:
             t.join()
 
         assert throttle.current_usage == num_threads * tokens_per_thread
+
+
+from datetime import datetime, timezone
+from agents.llm.rate_limiting import RetryHandler, RateLimitInfo, TPMExhaustedError
+
+
+class TestRetryHandler:
+    """Tests for 429 retry handling."""
+
+    def test_execute_success_no_retry(self):
+        """Successful calls should not retry."""
+        handler = RetryHandler(max_attempts=3)
+        result = handler.execute_with_retry(lambda: "ok")
+        assert result == "ok"
+
+    def test_execute_retries_on_rate_limit(self, mocker):
+        """Should retry on RuntimeError containing 'rate limit'."""
+        call_count = 0
+
+        def flaky():
+            nonlocal call_count
+            call_count += 1
+            if call_count < 3:
+                raise RuntimeError("Rate limit exceeded for gpt-4o")
+            return "success"
+
+        handler = RetryHandler(max_attempts=3, initial_wait=0.01)
+        result = handler.execute_with_retry(flaky)
+        assert result == "success"
+        assert call_count == 3
+
+    def test_execute_raises_after_max_attempts(self):
+        """Should raise TPMExhaustedError after max attempts."""
+        handler = RetryHandler(max_attempts=2, initial_wait=0.01)
+        with pytest.raises(TPMExhaustedError) as exc_info:
+            handler.execute_with_retry(
+                lambda: (_ for _ in ()).throw(RuntimeError("Rate limit exceeded"))
+            )
+        assert "2/2 retries exhausted" in str(exc_info.value)
+
+    def test_execute_does_not_retry_non_rate_limit_errors(self):
+        """Non-rate-limit errors should propagate immediately."""
+        handler = RetryHandler(max_attempts=3, initial_wait=0.01)
+        with pytest.raises(RuntimeError, match="connection refused"):
+            handler.execute_with_retry(
+                lambda: (_ for _ in ()).throw(RuntimeError("connection refused"))
+            )
+
+    def test_extract_rate_limit_info_anthropic(self):
+        """Should extract Anthropic-style rate limit headers."""
+        handler = RetryHandler()
+        headers = {
+            "anthropic-ratelimit-input-tokens-remaining": "8000",
+            "anthropic-ratelimit-output-tokens-remaining": "2000",
+            "anthropic-ratelimit-input-tokens-reset": "2026-02-13T12:00:45Z",
+        }
+        info = handler.extract_rate_limit_info(headers)
+        assert info is not None
+        assert info.input_tokens_remaining == 8000
+        assert info.output_tokens_remaining == 2000
+        assert info.reset_at is not None
+
+    def test_extract_rate_limit_info_openai(self):
+        """Should extract OpenAI-style rate limit headers."""
+        handler = RetryHandler()
+        headers = {"x-ratelimit-remaining-tokens": "5000"}
+        info = handler.extract_rate_limit_info(headers)
+        assert info is not None
+        assert info.input_tokens_remaining == 5000
+
+    def test_extract_rate_limit_info_unknown_headers(self):
+        """Should return None for unrecognized headers."""
+        handler = RetryHandler()
+        info = handler.extract_rate_limit_info({"content-type": "application/json"})
+        assert info is None
