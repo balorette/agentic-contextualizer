@@ -8,7 +8,34 @@ from src.agents.tools.repository_tools import (
     analyze_code,
     generate_context,
     refine_context,
+    _flatten_tree,
 )
+
+
+class TestFlattenTree:
+    """Tests for _flatten_tree helper."""
+
+    def test_flatten_tree_returns_relative_paths(self):
+        """_flatten_tree should return repo-relative paths without root dir name."""
+        tree = {
+            "name": "my-repo",
+            "type": "directory",
+            "children": [
+                {"name": "README.md", "type": "file"},
+                {
+                    "name": "src",
+                    "type": "directory",
+                    "children": [
+                        {"name": "main.py", "type": "file"},
+                    ],
+                },
+            ],
+        }
+        result = _flatten_tree(tree)
+        assert "README.md" in result
+        assert "src/main.py" in result
+        # Must NOT have repo name prefix
+        assert not any(p.startswith("my-repo/") for p in result)
 
 
 class TestScanStructure:

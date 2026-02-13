@@ -78,16 +78,28 @@ def _get_context_generator() -> ContextGenerator:
     return ContextGenerator(llm, config.output_dir)
 
 
-def _flatten_tree(node: dict, prefix: str = "") -> list[str]:
-    """Flatten nested tree dict into a compact list of paths."""
-    paths = []
-    name = node.get("name", "")
-    path = f"{prefix}/{name}" if prefix else name
-    if node.get("type") == "file":
-        paths.append(path)
-    elif node.get("type") == "directory":
-        for child in node.get("children", []):
-            paths.extend(_flatten_tree(child, path))
+def _flatten_tree(root: dict) -> list[str]:
+    """Flatten nested tree dict into a compact list of repo-relative paths.
+
+    The root directory name is excluded from output paths so that results
+    are repo-relative (e.g. ``src/main.py`` instead of ``myrepo/src/main.py``).
+    """
+
+    def _walk(node: dict, prefix: str) -> list[str]:
+        paths: list[str] = []
+        name = node.get("name", "")
+        path = f"{prefix}/{name}" if prefix else name
+        if node.get("type") == "file":
+            paths.append(path)
+        elif node.get("type") == "directory":
+            for child in node.get("children", []):
+                paths.extend(_walk(child, path))
+        return paths
+
+    # Skip root directory name — start from its children
+    paths: list[str] = []
+    for child in root.get("children", []):
+        paths.extend(_walk(child, ""))
     return paths
 
 
