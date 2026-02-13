@@ -128,8 +128,11 @@ def test_litellm_provider_generate_structured(mocker):
     assert call_kwargs["response_format"] == {"type": "json_object"}
 
 
+from agents.llm.rate_limiting import RateLimitedProvider
+
+
 def test_create_llm_provider_litellm():
-    """Test factory creates LiteLLMProvider for litellm config."""
+    """Test factory creates RateLimitedProvider wrapping LiteLLMProvider."""
     config = Config(
         llm_provider="litellm",
         model_name="gpt-4o",
@@ -137,27 +140,28 @@ def test_create_llm_provider_litellm():
     )
     provider = create_llm_provider(config)
 
-    assert isinstance(provider, LiteLLMProvider)
-    assert provider.model_name == "gpt-4o"
-    assert provider.api_key == "test-key"
+    assert isinstance(provider, RateLimitedProvider)
+    assert isinstance(provider.provider, LiteLLMProvider)
+    assert provider.provider.model_name == "gpt-4o"
+    assert provider.provider.api_key == "test-key"
 
 
 def test_create_llm_provider_anthropic():
-    """Test factory creates AnthropicProvider for default config."""
+    """Test factory creates RateLimitedProvider wrapping AnthropicProvider."""
     config = Config(
         llm_provider="anthropic",
         anthropic_api_key="test-key"
     )
     provider = create_llm_provider(config)
 
-    assert isinstance(provider, AnthropicProvider)
+    assert isinstance(provider, RateLimitedProvider)
+    assert isinstance(provider.provider, AnthropicProvider)
 
 
 def test_legacy_config_still_works(monkeypatch):
     """Test that old .env files work unchanged."""
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
     monkeypatch.setenv("MODEL_NAME", "claude-3-5-sonnet-20241022")
-    # Clear LLM_PROVIDER so it defaults to anthropic (real .env may set it)
     monkeypatch.delenv("LLM_PROVIDER", raising=False)
     monkeypatch.delenv("LLM_BASE_URL", raising=False)
 
@@ -165,5 +169,32 @@ def test_legacy_config_still_works(monkeypatch):
     provider = create_llm_provider(config)
 
     assert config.llm_provider == "anthropic"
-    assert isinstance(provider, AnthropicProvider)
-    assert provider.api_key == "test-key"
+    assert isinstance(provider, RateLimitedProvider)
+    assert isinstance(provider.provider, AnthropicProvider)
+    assert provider.provider.api_key == "test-key"
+
+
+def test_create_llm_provider_wraps_with_rate_limiting():
+    """Factory should return a RateLimitedProvider with correct TPM config."""
+    config = Config(
+        llm_provider="litellm",
+        model_name="gpt-4o",
+        openai_api_key="test-key",
+        max_tpm=50000,
+        tpm_safety_factor=0.9,
+    )
+    provider = create_llm_provider(config)
+    assert isinstance(provider, RateLimitedProvider)
+    assert provider.throttle.max_tpm == 50000
+    assert provider.throttle.effective_limit == 45000  # 50000 * 0.9
+
+
+def test_create_llm_provider_anthropic_wrapped():
+    """Anthropic provider should also be wrapped."""
+    config = Config(
+        llm_provider="anthropic",
+        anthropic_api_key="test-key",
+    )
+    provider = create_llm_provider(config)
+    assert isinstance(provider, RateLimitedProvider)
+    assert isinstance(provider.provider, AnthropicProvider)

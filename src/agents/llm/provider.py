@@ -201,19 +201,24 @@ def _resolve_api_key_for_model(model_name: str, config: "Config") -> Optional[st
 def create_llm_provider(config: "Config") -> LLMProvider:
     """Factory function to create the appropriate LLM provider.
 
+    Returns a RateLimitedProvider wrapping the inner provider with
+    TPM throttling, token estimation, and 429 retry handling.
+
     Args:
         config: Application configuration
 
     Returns:
-        Configured LLM provider instance (AnthropicProvider or LiteLLMProvider)
+        RateLimitedProvider wrapping AnthropicProvider or LiteLLMProvider
     """
+    from .rate_limiting import RateLimitedProvider, TPMThrottle, RetryHandler
+    from .token_estimator import LiteLLMTokenEstimator
+
     if config.llm_provider == "litellm":
         from .litellm_provider import LiteLLMProvider
 
-        # Determine which API key to use based on model
         api_key = _resolve_api_key_for_model(config.model_name, config)
 
-        return LiteLLMProvider(
+        inner = LiteLLMProvider(
             model_name=config.model_name,
             api_key=api_key,
             base_url=config.api_base_url,
@@ -221,11 +226,19 @@ def create_llm_provider(config: "Config") -> LLMProvider:
             timeout=config.timeout,
             max_output_tokens=config.max_output_tokens,
         )
-    else:  # "anthropic" or default
-        return AnthropicProvider(
+    else:
+        inner = AnthropicProvider(
             model_name=config.model_name,
             api_key=config.anthropic_api_key or config.api_key,
             base_url=config.api_base_url,
             max_retries=config.max_retries,
             timeout=config.timeout,
         )
+
+    return RateLimitedProvider(
+        provider=inner,
+        throttle=TPMThrottle(config.max_tpm, config.tpm_safety_factor),
+        estimator=LiteLLMTokenEstimator(),
+        retry_handler=RetryHandler(config.retry_max_attempts, config.retry_initial_wait),
+        max_tokens_per_call=config.max_tokens_per_call,
+    )
