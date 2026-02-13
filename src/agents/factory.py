@@ -3,7 +3,6 @@
 from typing import Optional
 from langchain.agents import create_agent
 from langchain.chat_models import init_chat_model
-from langchain_core.rate_limiters import InMemoryRateLimiter
 
 from .tools.repository_tools import (
     scan_structure,
@@ -139,18 +138,10 @@ def create_contextualizer_agent(
             import os
             os.environ["LITELLM_LOG"] = "DEBUG"
 
-        # Rate limiter — tunable via RATE_LIMIT_RPS and RATE_LIMIT_BURST in .env
-        rate_limiter = InMemoryRateLimiter(
-            requests_per_second=config.rate_limit_rps,
-            check_every_n_seconds=0.1,
-            max_bucket_size=config.rate_limit_burst,
-        )
-
         # Set up kwargs for ChatLiteLLM
         litellm_kwargs = {
             "model": model_name,  # LiteLLM handles model names directly
             "temperature": 0.0,
-            "rate_limiter": rate_limiter,
         }
 
         if api_key:
@@ -169,8 +160,6 @@ def create_contextualizer_agent(
             for k, v in litellm_kwargs.items():
                 if k == "api_key":
                     print(f"      {k}: ***{v[-4:] if v else 'None'}")
-                elif k == "rate_limiter":
-                    print(f"      {k}: <configured>")
                 else:
                     print(f"      {k}: {v}")
 
@@ -214,11 +203,21 @@ def create_contextualizer_agent(
         read_file_snippet,
     ]
 
-    # Token budget middleware — trims messages and truncates tool output
+    # TPM-aware throttle — shared instance for this agent session
+    from .llm.rate_limiting import TPMThrottle
+    from .llm.token_estimator import LiteLLMTokenEstimator
+
+    throttle = TPMThrottle(config.max_tpm, config.tpm_safety_factor)
+    estimator = LiteLLMTokenEstimator()
+
+    # Token budget middleware — trims messages, truncates tool output, and throttles TPM
     from .middleware.token_budget import TokenBudgetMiddleware
     budget_mw = TokenBudgetMiddleware(
         max_input_tokens=config.max_input_tokens,
         max_tool_output_chars=config.max_tool_output_chars,
+        throttle=throttle,
+        estimator=estimator,
+        model_name=model_name,
     )
     all_middleware = [budget_mw] + (middleware or [])
 

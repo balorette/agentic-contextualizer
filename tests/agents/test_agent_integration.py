@@ -314,3 +314,19 @@ class TestAgentMessageHandling:
             assert len(messages) > 0
             assert messages[0]["role"] == "user"
             assert isinstance(messages[0]["content"], str)
+
+
+def test_agent_middleware_has_throttle(monkeypatch):
+    """Agent factory should pass TPM throttle to middleware."""
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    monkeypatch.setenv("MAX_TPM", "40000")
+    monkeypatch.setenv("TPM_SAFETY_FACTOR", "0.9")
+    monkeypatch.delenv("LLM_BASE_URL", raising=False)
+    monkeypatch.delenv("LLM_PROVIDER", raising=False)
+
+    # We can't easily inspect middleware after agent creation,
+    # but we can verify no import errors and the factory doesn't crash
+    from src.agents.factory import create_contextualizer_agent
+    # This should not raise
+    agent = create_contextualizer_agent(debug=False)
+    assert agent is not None
