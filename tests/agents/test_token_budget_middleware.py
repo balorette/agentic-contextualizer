@@ -46,3 +46,35 @@ class TestTokenBudgetMiddlewareThrottle:
         result = mw.before_model(state, runtime=None)
         # Should not raise, just return normally
         assert result is None
+
+    def test_before_model_normalizes_langchain_roles(self):
+        """LangChain message types (human/ai) should be mapped to user/assistant."""
+        throttle = TPMThrottle(max_tpm=30000, safety_factor=1.0)
+        captured_messages = []
+
+        class CapturingEstimator:
+            def estimate(self, messages, model):
+                captured_messages.extend(messages)
+                return 100
+
+        mw = TokenBudgetMiddleware(
+            throttle=throttle,
+            estimator=CapturingEstimator(),
+            model_name="test-model",
+        )
+
+        # Simulate LangChain message objects with .type attribute
+        class FakeMessage:
+            def __init__(self, type_, content):
+                self.type = type_
+                self.content = content
+
+        state = {"messages": [
+            FakeMessage("human", "hello"),
+            FakeMessage("ai", "hi there"),
+            FakeMessage("system", "you are helpful"),
+        ]}
+        mw.before_model(state, runtime=None)
+
+        roles = [m["role"] for m in captured_messages]
+        assert roles == ["user", "assistant", "system"]

@@ -64,12 +64,13 @@ class TokenBudgetMiddleware(AgentMiddleware):
             msg_dicts = []
             for m in messages:
                 if isinstance(m, dict):
-                    msg_dicts.append(m)
+                    raw_role = m.get("role", "user")
                 else:
-                    msg_dicts.append({
-                        "role": getattr(m, "type", "user"),
-                        "content": getattr(m, "content", str(m)),
-                    })
+                    raw_role = getattr(m, "type", "user")
+                # Map LangChain types to OpenAI-style roles
+                role = {"human": "user", "ai": "assistant"}.get(raw_role, raw_role)
+                content = m.get("content", "") if isinstance(m, dict) else getattr(m, "content", str(m))
+                msg_dicts.append({"role": role, "content": content})
             estimated = self.estimator.estimate(msg_dicts, self.model_name)
             self.throttle.wait_if_needed(estimated)
 
