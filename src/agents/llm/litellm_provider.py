@@ -122,8 +122,9 @@ class LiteLLMProvider(LLMProvider):
             messages.append({"role": "system", "content": system})
 
         # Add schema instructions to the prompt for better JSON mode results
-        schema_json = schema.model_json_schema()
-        enhanced_prompt = f"{prompt}\n\nRespond with a JSON object matching this schema:\n{schema_json}"
+        schema_dict = schema.model_json_schema()
+        schema_json = json.dumps(schema_dict, indent=2)
+        enhanced_prompt = f"{prompt}\n\nRespond with a JSON object matching this schema:\n```json\n{schema_json}\n```"
         messages.append({"role": "user", "content": enhanced_prompt})
 
         try:

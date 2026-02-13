@@ -128,6 +128,28 @@ def test_litellm_provider_generate_structured(mocker):
     assert call_kwargs["response_format"] == {"type": "json_object"}
 
 
+def test_litellm_structured_schema_is_json_not_repr(mocker):
+    """Schema in prompt should be valid JSON, not Python dict repr."""
+    from pydantic import BaseModel
+
+    class TestSchema(BaseModel):
+        name: str
+
+    mock_response = mocker.Mock()
+    mock_response.choices = [
+        mocker.Mock(message=mocker.Mock(content='{"name": "test"}'))
+    ]
+    mock_completion = mocker.patch("litellm.completion", return_value=mock_response)
+
+    provider = LiteLLMProvider(model_name="gpt-4o", api_key="test-key")
+    provider.generate_structured("Generate", schema=TestSchema)
+
+    prompt_sent = mock_completion.call_args[1]["messages"][-1]["content"]
+    # Should contain valid JSON (double quotes), not Python repr (single quotes)
+    assert '"type"' in prompt_sent or '"properties"' in prompt_sent
+    assert "{'type'" not in prompt_sent
+
+
 from agents.llm.rate_limiting import RateLimitedProvider
 
 
