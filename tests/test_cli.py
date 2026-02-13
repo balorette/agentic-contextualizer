@@ -185,6 +185,60 @@ class TestCLIGenerate:
         assert result.exit_code == 0
 
 
+class TestPrepareConfig:
+    """Test _prepare_config helper."""
+
+    @patch("src.agents.main.Config.from_env")
+    def test_returns_config_on_valid_key(self, mock_from_env):
+        from src.agents.main import _prepare_config
+
+        config = Mock()
+        config.anthropic_api_key = "test-key"
+        config.api_key = "test-key"
+        config.model_name = "claude-3-5-sonnet-20241022"
+        config.llm_provider = "anthropic"
+        config.api_base_url = None
+        mock_from_env.return_value = config
+
+        result = _prepare_config(None, None)
+        assert result is not None
+
+    @patch("src.agents.main.Config.from_env")
+    def test_returns_none_on_missing_key(self, mock_from_env):
+        from src.agents.main import _prepare_config
+
+        config = Mock()
+        config.anthropic_api_key = None
+        config.api_key = None
+        config.openai_api_key = None
+        config.google_api_key = None
+        config.model_name = "claude-3-5-sonnet-20241022"
+        config.llm_provider = "anthropic"
+        config.api_base_url = None
+        mock_from_env.return_value = config
+
+        result = _prepare_config(None, None)
+        assert result is None
+
+    @patch("src.agents.main.Config.from_env")
+    def test_passes_provider_override(self, mock_from_env):
+        from src.agents.main import _prepare_config
+
+        config = Mock()
+        config.anthropic_api_key = "key"
+        config.api_key = "key"
+        config.model_name = "gpt-4o"
+        config.llm_provider = "litellm"
+        config.api_base_url = None
+        config.openai_api_key = "key"
+        mock_from_env.return_value = config
+
+        _prepare_config("litellm", "gpt-4o")
+        call_kwargs = mock_from_env.call_args[1]
+        assert call_kwargs["cli_overrides"]["llm_provider"] == "litellm"
+        assert call_kwargs["cli_overrides"]["model_name"] == "gpt-4o"
+
+
 class TestCLIRefine:
     """Test the refine command in both modes."""
 

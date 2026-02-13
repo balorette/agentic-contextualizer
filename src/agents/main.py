@@ -88,6 +88,75 @@ def _validate_api_key(config: Config) -> tuple[bool, str]:
     return True, ""
 
 
+def _prepare_config(provider: str | None, model: str | None) -> Config | None:
+    """Build config with CLI overrides and validate API key.
+
+    Returns Config on success, None on validation failure (error already printed).
+    """
+    cli_overrides = {}
+    if provider:
+        cli_overrides["llm_provider"] = provider
+    if model:
+        cli_overrides["model_name"] = model
+
+    config = Config.from_env(cli_overrides=cli_overrides)
+
+    is_valid, error_msg = _validate_api_key(config)
+    if not is_valid:
+        click.echo(error_msg, err=True)
+        return None
+    return config
+
+
+def _run_agent(agent, user_message: str, agent_config: dict, stream: bool, debug: bool) -> int:
+    """Execute an agent with invoke or stream, returning exit code.
+
+    Handles TTY detection for streaming and common exception handling.
+    """
+    try:
+        if stream:
+            from .streaming import stream_agent_execution, simple_stream_agent_execution
+            import sys
+
+            if sys.stdout.isatty():
+                stream_agent_execution(
+                    agent,
+                    messages=[{"role": "user", "content": user_message}],
+                    config=agent_config,
+                    verbose=debug,
+                )
+            else:
+                simple_stream_agent_execution(
+                    agent,
+                    messages=[{"role": "user", "content": user_message}],
+                    config=agent_config,
+                )
+        else:
+            click.echo("\n🔄 Agent executing...")
+            result = agent.invoke(
+                {"messages": [{"role": "user", "content": user_message}]},
+                config=agent_config,
+            )
+            final_message = result.get("messages", [])[-1]
+            output_content = (
+                final_message.content
+                if hasattr(final_message, "content")
+                else str(final_message)
+            )
+            click.echo("\n📋 Agent Response:")
+            click.echo(output_content)
+            click.echo("\n✅ Agent execution complete")
+
+        return 0
+
+    except Exception as e:
+        click.echo(f"\n❌ Agent execution failed: {e}", err=True)
+        if debug:
+            import traceback
+            traceback.print_exc()
+        return 1
+
+
 @click.group()
 def cli():
     """Agentic Contextualizer - Generate AI-friendly codebase context."""
@@ -127,19 +196,8 @@ def generate(source: str, summary: str, output: str | None, mode: str, provider:
         # Agent mode with streaming output (real-time feedback)
         python -m agents.main generate /path/to/repo -s "API" --mode agent --stream
     """
-    # Build CLI overrides dict
-    cli_overrides = {}
-    if provider:
-        cli_overrides["llm_provider"] = provider
-    if model:
-        cli_overrides["model_name"] = model
-
-    config = Config.from_env(cli_overrides=cli_overrides)
-
-    # Validate API key for chosen provider/model
-    is_valid, error_msg = _validate_api_key(config)
-    if not is_valid:
-        click.echo(error_msg, err=True)
+    config = _prepare_config(provider, model)
+    if config is None:
         return 1
 
     try:
@@ -241,52 +299,7 @@ def _generate_agent_mode(repo: Path, summary: str, config: Config, debug: bool, 
     if is_tracing_enabled():
         click.echo(f"   Tracing: Enabled")
 
-    # Invoke agent
-    try:
-        if stream:
-            # Use streaming for real-time feedback
-            from .streaming import stream_agent_execution, simple_stream_agent_execution
-            import sys
-
-            # Use rich formatting if stdout is a TTY, otherwise use simple streaming
-            if sys.stdout.isatty():
-                stream_agent_execution(
-                    agent,
-                    messages=[{"role": "user", "content": user_message}],
-                    config=agent_config,
-                    verbose=debug,
-                )
-            else:
-                simple_stream_agent_execution(
-                    agent,
-                    messages=[{"role": "user", "content": user_message}],
-                    config=agent_config,
-                )
-        else:
-            # Use standard invocation
-            click.echo("\n🔄 Agent executing...")
-
-            result = agent.invoke(
-                {"messages": [{"role": "user", "content": user_message}]}, config=agent_config
-            )
-
-            # Extract final message
-            final_message = result.get("messages", [])[-1]
-            output_content = final_message.content if hasattr(final_message, "content") else str(final_message)
-
-            click.echo("\n📋 Agent Response:")
-            click.echo(output_content)
-            click.echo("\n✅ Agent execution complete")
-
-        return 0
-
-    except Exception as e:
-        click.echo(f"\n❌ Agent execution failed: {e}", err=True)
-        if debug:
-            import traceback
-
-            traceback.print_exc()
-        return 1
+    return _run_agent(agent, user_message, agent_config, stream, debug)
 
 
 @cli.command()
@@ -316,20 +329,9 @@ def refine(context_file: str, request: str, mode: str, provider: str | None, mod
         # Agent mode with streaming output
         python -m agents.main refine contexts/myapp/context.md -r "Add auth" --mode agent --stream
     """
-    # Build CLI overrides dict
-    cli_overrides = {}
-    if provider:
-        cli_overrides["llm_provider"] = provider
-    if model:
-        cli_overrides["model_name"] = model
-
     context_path = Path(context_file)
-    config = Config.from_env(cli_overrides=cli_overrides)
-
-    # Validate API key for chosen provider/model
-    is_valid, error_msg = _validate_api_key(config)
-    if not is_valid:
-        click.echo(error_msg, err=True)
+    config = _prepare_config(provider, model)
+    if config is None:
         return 1
 
     if mode == "agent":
@@ -400,52 +402,7 @@ def _refine_agent_mode(context_path: Path, request: str, config: Config, debug: 
     if is_tracing_enabled():
         click.echo(f"   Tracing: Enabled")
 
-    # Invoke agent
-    try:
-        if stream:
-            # Use streaming for real-time feedback
-            from .streaming import stream_agent_execution, simple_stream_agent_execution
-            import sys
-
-            # Use rich formatting if stdout is a TTY, otherwise use simple streaming
-            if sys.stdout.isatty():
-                stream_agent_execution(
-                    agent,
-                    messages=[{"role": "user", "content": user_message}],
-                    config=agent_config,
-                    verbose=debug,
-                )
-            else:
-                simple_stream_agent_execution(
-                    agent,
-                    messages=[{"role": "user", "content": user_message}],
-                    config=agent_config,
-                )
-        else:
-            # Use standard invocation
-            click.echo("\n🔄 Agent executing...")
-
-            result = agent.invoke(
-                {"messages": [{"role": "user", "content": user_message}]}, config=agent_config
-            )
-
-            # Extract final message
-            final_message = result.get("messages", [])[-1]
-            output_content = final_message.content if hasattr(final_message, "content") else str(final_message)
-
-            click.echo("\n📋 Agent Response:")
-            click.echo(output_content)
-            click.echo("\n✅ Agent execution complete")
-
-        return 0
-
-    except Exception as e:
-        click.echo(f"\n❌ Agent execution failed: {e}", err=True)
-        if debug:
-            import traceback
-
-            traceback.print_exc()
-        return 1
+    return _run_agent(agent, user_message, agent_config, stream, debug)
 
 
 @cli.command()
@@ -484,19 +441,8 @@ def scope(source: str, question: str, output: str | None, mode: str, provider: s
         # Agent mode with streaming
         python -m agents.main scope /path/to/repo -q "auth" --mode agent --stream
     """
-    # Build CLI overrides dict
-    cli_overrides = {}
-    if provider:
-        cli_overrides["llm_provider"] = provider
-    if model:
-        cli_overrides["model_name"] = model
-
-    config = Config.from_env(cli_overrides=cli_overrides)
-
-    # Validate API key for chosen provider/model
-    is_valid, error_msg = _validate_api_key(config)
-    if not is_valid:
-        click.echo(error_msg, err=True)
+    config = _prepare_config(provider, model)
+    if config is None:
         return 1
 
     # Context files are handled directly (no resolve_repo needed)
@@ -683,44 +629,7 @@ def _scope_agent_mode(
     if is_tracing_enabled():
         click.echo("   Tracing: Enabled")
 
-    try:
-        if stream:
-            from .streaming import stream_agent_execution, simple_stream_agent_execution
-            import sys
-
-            if sys.stdout.isatty():
-                stream_agent_execution(
-                    agent,
-                    messages=[{"role": "user", "content": user_message}],
-                    config=agent_config,
-                    verbose=debug,
-                )
-            else:
-                simple_stream_agent_execution(
-                    agent,
-                    messages=[{"role": "user", "content": user_message}],
-                    config=agent_config,
-                )
-        else:
-            click.echo("\n🔄 Agent executing...")
-            result = agent.invoke(
-                {"messages": [{"role": "user", "content": user_message}]},
-                config=agent_config,
-            )
-            final_message = result.get("messages", [])[-1]
-            output_content = final_message.content if hasattr(final_message, "content") else str(final_message)
-            click.echo("\n📋 Agent Response:")
-            click.echo(output_content)
-            click.echo("\n✅ Agent execution complete")
-
-        return 0
-
-    except Exception as e:
-        click.echo(f"\n❌ Agent execution failed: {e}", err=True)
-        if debug:
-            import traceback
-            traceback.print_exc()
-        return 1
+    return _run_agent(agent, user_message, agent_config, stream, debug)
 
 
 if __name__ == "__main__":
