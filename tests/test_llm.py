@@ -220,3 +220,28 @@ def test_create_llm_provider_anthropic_wrapped():
     provider = create_llm_provider(config)
     assert isinstance(provider, RateLimitedProvider)
     assert isinstance(provider.provider, AnthropicProvider)
+
+
+def test_resolve_api_key_strips_provider_prefix():
+    """Provider-prefixed model names (openai:gpt-4o) should resolve correctly."""
+    config = Config(
+        openai_api_key="openai-key",
+        anthropic_api_key="anthropic-key",
+        google_api_key="google-key",
+    )
+    from agents.llm.provider import _resolve_api_key_for_model
+
+    assert _resolve_api_key_for_model("openai:gpt-4o", config) == "openai-key"
+    assert _resolve_api_key_for_model("anthropic:claude-3-5-sonnet", config) == "anthropic-key"
+    assert _resolve_api_key_for_model("google-genai:gemini-1.5-pro", config) == "google-key"
+    # Unprefixed should still work
+    assert _resolve_api_key_for_model("gpt-4o", config) == "openai-key"
+    assert _resolve_api_key_for_model("claude-3-5-sonnet", config) == "anthropic-key"
+
+
+def test_resolve_api_key_includes_google_in_fallback():
+    """Fallback should include google_api_key."""
+    config = Config(google_api_key="gkey")
+    from agents.llm.provider import _resolve_api_key_for_model
+
+    assert _resolve_api_key_for_model("some-unknown-model", config) == "gkey"

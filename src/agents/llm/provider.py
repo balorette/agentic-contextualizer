@@ -175,27 +175,39 @@ class AnthropicProvider(LLMProvider):
         return str(content)
 
 
+def _strip_provider_prefix(model_name: str) -> str:
+    """Strip provider prefix from model names like 'openai:gpt-4o'."""
+    return model_name.split(":", 1)[1] if ":" in model_name else model_name
+
+
 def _resolve_api_key_for_model(model_name: str, config: "Config") -> Optional[str]:
     """Resolve which API key to use based on model name.
 
     Args:
-        model_name: LiteLLM model identifier
+        model_name: LiteLLM model identifier (may include provider prefix)
         config: Application configuration
 
     Returns:
         Appropriate API key or None for local models
     """
-    if model_name.startswith("gpt-") or model_name.startswith("o1"):
+    normalized = _strip_provider_prefix(model_name)
+
+    if normalized.startswith("gpt-") or normalized.startswith("o1"):
         return config.openai_api_key or config.api_key
-    elif model_name.startswith("claude"):
+    elif normalized.startswith("claude"):
         return config.anthropic_api_key or config.api_key
-    elif model_name.startswith("gemini") or model_name.startswith("vertex"):
+    elif normalized.startswith("gemini") or normalized.startswith("vertex"):
         return config.google_api_key or config.api_key
-    elif model_name.startswith("ollama") or model_name.startswith("lmstudio"):
+    elif normalized.startswith("ollama") or normalized.startswith("lmstudio"):
         return None  # Local models don't need API keys
     else:
         # For gateways or unknown providers, fall back to any available key
-        return config.api_key or config.openai_api_key or config.anthropic_api_key
+        return (
+            config.api_key
+            or config.openai_api_key
+            or config.anthropic_api_key
+            or config.google_api_key
+        )
 
 
 def create_llm_provider(config: "Config") -> LLMProvider:

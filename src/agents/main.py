@@ -61,8 +61,12 @@ def _validate_api_key(config: Config) -> tuple[bool, str]:
     Returns:
         Tuple of (is_valid, error_message). error_message is empty if valid.
     """
+    # Strip provider prefix (e.g. "openai:gpt-4o" -> "gpt-4o") for matching
+    from .llm.provider import _strip_provider_prefix
+    normalized_model = _strip_provider_prefix(config.model_name)
+
     # Local models don't need API keys
-    if config.model_name.startswith(("ollama", "lmstudio")):
+    if normalized_model.startswith(("ollama", "lmstudio")):
         return True, ""
 
     # When using a custom gateway (base_url), the gateway handles auth.
@@ -76,13 +80,13 @@ def _validate_api_key(config: Config) -> tuple[bool, str]:
             return True, ""
 
         # Direct LiteLLM (no gateway) - need provider-specific keys
-        if config.model_name.startswith("gpt-") or config.model_name.startswith("o1"):
+        if normalized_model.startswith("gpt-") or normalized_model.startswith("o1"):
             if not config.openai_api_key:
                 return False, "Error: OPENAI_API_KEY not set. Required for OpenAI models with LiteLLM."
-        elif config.model_name.startswith("claude"):
+        elif normalized_model.startswith("claude"):
             if not config.anthropic_api_key:
                 return False, "Error: ANTHROPIC_API_KEY not set. Required for Claude models with LiteLLM."
-        elif config.model_name.startswith(("gemini", "vertex")):
+        elif normalized_model.startswith(("gemini", "vertex")):
             if not config.google_api_key:
                 return False, "Error: GOOGLE_API_KEY not set. Required for Google models with LiteLLM."
         return True, ""
