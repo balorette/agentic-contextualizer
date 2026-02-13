@@ -3,7 +3,6 @@
 from pathlib import Path
 from typing import Optional
 from langchain.agents import create_agent
-from langchain.chat_models import init_chat_model
 from langchain_core.tools import tool
 
 from ..tools import (
@@ -17,7 +16,6 @@ from ..tools import (
 from .scoped_generator import ScopedGenerator
 from ..llm.provider import create_llm_provider
 from ..config import Config
-from ..factory import _format_model_name_for_langchain
 
 
 SCOPED_AGENT_SYSTEM_PROMPT = """You are a scoped context generator agent. Your goal is to analyze a specific aspect of a codebase and produce focused documentation.
@@ -138,53 +136,16 @@ def create_scoped_agent(
     # Initialize chat model
     config = Config.from_env()
 
-    # Auto-detect if we should use LiteLLM
-    should_use_litellm = use_litellm or base_url is not None or config.llm_provider == "litellm"
+    from ..llm.chat_model_factory import build_chat_model, build_token_middleware
 
-    # Resolve API key if not explicitly provided
-    if not api_key:
-        from ..llm.provider import _resolve_api_key_for_model
-        api_key = _resolve_api_key_for_model(model_name, config)
-
-    if should_use_litellm:
-        # Use ChatLiteLLM for custom gateways
-        from langchain_litellm import ChatLiteLLM
-
-        # Set up kwargs for ChatLiteLLM
-        litellm_kwargs = {
-            "model": model_name,
-            "temperature": 0.0,
-        }
-
-        if api_key:
-            litellm_kwargs["api_key"] = api_key
-        if base_url:
-            litellm_kwargs["api_base"] = base_url
-        if config.max_retries:
-            litellm_kwargs["max_retries"] = config.max_retries
-        if config.timeout:
-            litellm_kwargs["request_timeout"] = config.timeout
-        if config.max_output_tokens:
-            litellm_kwargs["max_tokens"] = config.max_output_tokens
-
-        if debug:
-            print(f"[DEBUG] ChatLiteLLM kwargs: {model_name}")
-
-        model = ChatLiteLLM(**litellm_kwargs)
-
-        if debug:
-            print(f"[DEBUG] Created ChatLiteLLM for scoped agent with model: {model_name}")
-    else:
-        # Use standard LangChain init_chat_model
-        formatted_model_name = _format_model_name_for_langchain(model_name)
-
-        model_kwargs = {}
-        if base_url:
-            model_kwargs["base_url"] = base_url
-        if api_key:
-            model_kwargs["api_key"] = api_key
-
-        model = init_chat_model(formatted_model_name, **model_kwargs)
+    model = build_chat_model(
+        config=config,
+        model_name=model_name,
+        base_url=base_url,
+        api_key=api_key,
+        use_litellm=use_litellm,
+        debug=debug,
+    )
 
     # Create file, analysis, and code search tools bound to backend
     file_tools = create_file_tools(backend)
@@ -259,22 +220,7 @@ def create_scoped_agent(
     # Combine all tools
     tools = file_tools + analysis_tools + code_search_tools + [generate_scoped_context]
 
-    # TPM-aware throttle — shared instance for this agent session
-    from ..llm.rate_limiting import TPMThrottle
-    from ..llm.token_estimator import LiteLLMTokenEstimator
-
-    throttle = TPMThrottle(config.max_tpm, config.tpm_safety_factor)
-    estimator = LiteLLMTokenEstimator()
-
-    # Token budget middleware — trims messages, truncates tool output, and throttles TPM
-    from ..middleware.token_budget import TokenBudgetMiddleware
-    budget_mw = TokenBudgetMiddleware(
-        max_input_tokens=config.max_input_tokens,
-        max_tool_output_chars=config.max_tool_output_chars,
-        throttle=throttle,
-        estimator=estimator,
-        model_name=model_name,
-    )
+    budget_mw = build_token_middleware(config, model_name)
 
     # Create agent
     agent = create_agent(

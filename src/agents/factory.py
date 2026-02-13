@@ -2,7 +2,6 @@
 
 from typing import Optional
 from langchain.agents import create_agent
-from langchain.chat_models import init_chat_model
 
 from .tools.repository_tools import (
     scan_structure,
@@ -15,34 +14,6 @@ from .tools.exploration_tools import (
     list_key_files,
     read_file_snippet,
 )
-
-
-def _format_model_name_for_langchain(model_name: str) -> str:
-    """Format model name for LangChain's init_chat_model.
-
-    LangChain expects format: "provider:model"
-    Examples: "openai:gpt-4o", "anthropic:claude-3-5-sonnet-20241022"
-
-    Args:
-        model_name: Raw model name (e.g., "gpt-4o", "claude-3-5-sonnet")
-
-    Returns:
-        Formatted model name with provider prefix
-    """
-    # Already has provider prefix
-    if ":" in model_name:
-        return model_name
-
-    # Detect provider from model name and add prefix
-    if model_name.startswith("gpt-") or model_name.startswith("o1"):
-        return f"openai:{model_name}"
-    elif model_name.startswith("claude"):
-        return f"anthropic:{model_name}"
-    elif model_name.startswith("gemini") or model_name.startswith("vertex"):
-        return f"google-genai:{model_name}"
-    else:
-        # Default to anthropic for backward compatibility
-        return f"anthropic:{model_name}"
 
 
 AGENT_SYSTEM_PROMPT = """You are a repository context generator. Analyze codebases and produce context documentation.
@@ -109,88 +80,17 @@ def create_contextualizer_agent(
         ```
     """
     from .config import Config
-    from .llm.provider import _resolve_api_key_for_model
+    from .llm.chat_model_factory import build_chat_model, build_token_middleware
 
-    # Auto-detect if we should use LiteLLM
-    # Use LiteLLM if: custom base_url OR explicitly requested OR provider is "litellm"
     config = Config.from_env()
-    should_use_litellm = use_litellm or base_url is not None or config.llm_provider == "litellm"
-
-    # Resolve API key if not explicitly provided
-    if not api_key:
-        api_key = _resolve_api_key_for_model(model_name, config)
-
-    # Debug output
-    if debug:
-        print(f"[DEBUG] Creating LangChain model:")
-        print(f"  - Original model_name: {model_name}")
-        print(f"  - Using LiteLLM: {should_use_litellm}")
-        print(f"  - base_url: {base_url or 'None'}")
-        print(f"  - api_key: {'***' + api_key[-4:] if api_key else 'None'}")
-
-    if should_use_litellm:
-        # Use ChatLiteLLM for custom gateways
-        from langchain_litellm import ChatLiteLLM
-        import litellm
-
-        # Enable LiteLLM debug mode if debugging
-        if debug:
-            import os
-            os.environ["LITELLM_LOG"] = "DEBUG"
-
-        # Set up kwargs for ChatLiteLLM
-        litellm_kwargs = {
-            "model": model_name,  # LiteLLM handles model names directly
-            "temperature": 0.0,
-        }
-
-        if api_key:
-            litellm_kwargs["api_key"] = api_key
-        if base_url:
-            litellm_kwargs["api_base"] = base_url
-        if config.max_retries:
-            litellm_kwargs["max_retries"] = config.max_retries
-        if config.timeout:
-            litellm_kwargs["request_timeout"] = config.timeout
-        if config.max_output_tokens:
-            litellm_kwargs["max_tokens"] = config.max_output_tokens
-
-        if debug:
-            print(f"  - ChatLiteLLM kwargs:")
-            for k, v in litellm_kwargs.items():
-                if k == "api_key":
-                    print(f"      {k}: ***{v[-4:] if v else 'None'}")
-                else:
-                    print(f"      {k}: {v}")
-
-        model = ChatLiteLLM(**litellm_kwargs)
-
-        if debug:
-            print(f"  - Created ChatLiteLLM successfully")
-    else:
-        # Use standard LangChain init_chat_model for direct providers
-        formatted_model_name = _format_model_name_for_langchain(model_name)
-
-        model_kwargs = {}
-        if base_url:
-            model_kwargs["base_url"] = base_url
-        if api_key:
-            model_kwargs["api_key"] = api_key
-
-        if debug:
-            print(f"  - Formatted model_name: {formatted_model_name}")
-
-        try:
-            model = init_chat_model(formatted_model_name, **model_kwargs)
-        except Exception as e:
-            # If LangChain init fails, suggest using LiteLLM
-            if "404" in str(e) or "401" in str(e):
-                raise RuntimeError(
-                    f"Failed to initialize model '{formatted_model_name}'.\n"
-                    f"For custom LiteLLM gateways, set LLM_PROVIDER=litellm in .env\n"
-                    f"Original error: {e}"
-                ) from e
-            raise
+    model = build_chat_model(
+        config=config,
+        model_name=model_name,
+        base_url=base_url,
+        api_key=api_key,
+        use_litellm=use_litellm,
+        debug=debug,
+    )
 
     # Collect all tools
     tools = [
@@ -203,22 +103,7 @@ def create_contextualizer_agent(
         read_file_snippet,
     ]
 
-    # TPM-aware throttle — shared instance for this agent session
-    from .llm.rate_limiting import TPMThrottle
-    from .llm.token_estimator import LiteLLMTokenEstimator
-
-    throttle = TPMThrottle(config.max_tpm, config.tpm_safety_factor)
-    estimator = LiteLLMTokenEstimator()
-
-    # Token budget middleware — trims messages, truncates tool output, and throttles TPM
-    from .middleware.token_budget import TokenBudgetMiddleware
-    budget_mw = TokenBudgetMiddleware(
-        max_input_tokens=config.max_input_tokens,
-        max_tool_output_chars=config.max_tool_output_chars,
-        throttle=throttle,
-        estimator=estimator,
-        model_name=model_name,
-    )
+    budget_mw = build_token_middleware(config, model_name)
     all_middleware = [budget_mw] + (middleware or [])
 
     # Create agent with tools and system prompt

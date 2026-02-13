@@ -11,6 +11,7 @@ from .rate_limiting import (
     TokenBudgetExceededError,
     TPMExhaustedError,
 )
+from .chat_model_factory import build_chat_model, build_token_middleware
 
 __all__ = [
     "LLMProvider",
@@ -26,4 +27,6 @@ __all__ = [
     "RateLimitInfo",
     "TokenBudgetExceededError",
     "TPMExhaustedError",
+    "build_chat_model",
+    "build_token_middleware",
 ]

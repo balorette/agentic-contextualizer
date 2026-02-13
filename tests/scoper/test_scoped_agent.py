@@ -44,8 +44,8 @@ class TestCreateScopedAgent:
 
     @pytest.fixture
     def mock_init_chat_model(self):
-        """Mock langchain init_chat_model."""
-        with patch("src.agents.scoper.agent.init_chat_model") as mock:
+        """Mock build_chat_model (replaces init_chat_model after refactor)."""
+        with patch("src.agents.llm.chat_model_factory.init_chat_model") as mock:
             yield mock
 
     def test_creates_agent_with_correct_tools(
