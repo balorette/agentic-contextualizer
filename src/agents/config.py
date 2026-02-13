@@ -39,9 +39,12 @@ class Config(BaseModel):
     max_retries: int = Field(default=3)
     timeout: int = Field(default=60)
 
-    # Rate Limiting
-    rate_limit_rps: float = Field(default=0.3)
-    rate_limit_burst: int = Field(default=3)
+    # Rate Limiting — TPM-aware
+    max_tpm: int = Field(default=30000)
+    tpm_safety_factor: float = Field(default=0.85)
+    max_tokens_per_call: Optional[int] = Field(default=None)
+    retry_max_attempts: int = Field(default=3)
+    retry_initial_wait: float = Field(default=2.0)
 
     # Token Budget
     max_output_tokens: Optional[int] = Field(default=4096)
@@ -113,8 +116,11 @@ class Config(BaseModel):
 
             "max_retries": _parse_int(os.getenv("LLM_MAX_RETRIES"), 3),
             "timeout": _parse_int(os.getenv("LLM_TIMEOUT"), 60),
-            "rate_limit_rps": _parse_float(os.getenv("RATE_LIMIT_RPS"), 0.3),
-            "rate_limit_burst": _parse_int(os.getenv("RATE_LIMIT_BURST"), 3),
+            "max_tpm": _parse_int(os.getenv("MAX_TPM"), 30000),
+            "tpm_safety_factor": _parse_float(os.getenv("TPM_SAFETY_FACTOR"), 0.85),
+            "max_tokens_per_call": _parse_int(os.getenv("MAX_TOKENS_PER_CALL"), None) if os.getenv("MAX_TOKENS_PER_CALL") else None,
+            "retry_max_attempts": _parse_int(os.getenv("RETRY_MAX_ATTEMPTS"), 3),
+            "retry_initial_wait": _parse_float(os.getenv("RETRY_INITIAL_WAIT"), 2.0),
             "max_output_tokens": _parse_int(os.getenv("LLM_MAX_OUTPUT_TOKENS"), 4096),
             "max_input_tokens": _parse_int(os.getenv("LLM_MAX_INPUT_TOKENS"), None) if os.getenv("LLM_MAX_INPUT_TOKENS") else None,
             "max_tool_output_chars": _parse_int(os.getenv("MAX_TOOL_OUTPUT_CHARS"), 12000),

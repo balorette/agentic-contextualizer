@@ -61,3 +61,30 @@ def test_config_cli_overrides(monkeypatch):
 
     assert config.llm_provider == "litellm"
     assert config.model_name == "gpt-4o"
+
+
+def test_config_tpm_defaults():
+    """TPM rate limit fields should have correct defaults."""
+    config = Config(api_key="test")
+    assert config.max_tpm == 30000
+    assert config.tpm_safety_factor == 0.85
+    assert config.max_tokens_per_call is None
+    assert config.retry_max_attempts == 3
+    assert config.retry_initial_wait == 2.0
+
+
+def test_config_tpm_from_env(monkeypatch):
+    """TPM config should load from environment variables."""
+    monkeypatch.setenv("MAX_TPM", "50000")
+    monkeypatch.setenv("TPM_SAFETY_FACTOR", "0.9")
+    monkeypatch.setenv("MAX_TOKENS_PER_CALL", "8000")
+    monkeypatch.setenv("RETRY_MAX_ATTEMPTS", "5")
+    monkeypatch.setenv("RETRY_INITIAL_WAIT", "1.5")
+
+    config = Config.from_env()
+
+    assert config.max_tpm == 50000
+    assert config.tpm_safety_factor == 0.9
+    assert config.max_tokens_per_call == 8000
+    assert config.retry_max_attempts == 5
+    assert config.retry_initial_wait == 1.5
