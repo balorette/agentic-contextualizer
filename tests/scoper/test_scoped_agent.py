@@ -152,6 +152,22 @@ class TestCreateScopedAgent:
         call_kwargs = mock_create_agent.call_args[1]
         assert call_kwargs["debug"] is True
 
+    def test_config_from_env_called_once(
+        self,
+        sample_repo,
+        mock_config,
+        mock_llm,
+        mock_create_agent,
+        mock_init_chat_model,
+    ):
+        """Generator LLM provider should use the same config as the agent model."""
+        from src.agents.scoper.agent import create_scoped_agent
+
+        create_scoped_agent(sample_repo)
+
+        calls = mock_config.from_env.call_count
+        assert calls == 1, f"Config.from_env() called {calls} times, expected 1"
+
 
 class TestCreateScopedAgentWithBudget:
     """Tests for create_scoped_agent_with_budget factory."""

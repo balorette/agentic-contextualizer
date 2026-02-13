@@ -201,7 +201,7 @@ def create_scoped_agent(
     code_search_tools = create_search_tools(backend)
 
     # Create the generation tool (needs LLM and output config)
-    config = Config.from_env()
+    # Reuse the config from above to ensure consistent credentials
     llm_provider = create_llm_provider(config)
     generator = ScopedGenerator(llm_provider, output_dir)
 
