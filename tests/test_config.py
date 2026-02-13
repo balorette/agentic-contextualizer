@@ -88,3 +88,16 @@ def test_config_tpm_from_env(monkeypatch):
     assert config.max_tokens_per_call == 8000
     assert config.retry_max_attempts == 5
     assert config.retry_initial_wait == 1.5
+
+
+def test_default_ignored_dirs_is_frozenset():
+    """DEFAULT_IGNORED_DIRS should be a frozenset for O(1) lookup."""
+    assert isinstance(DEFAULT_IGNORED_DIRS, frozenset)
+
+
+def test_default_ignored_dirs_includes_cache_dirs():
+    """DEFAULT_IGNORED_DIRS should include mypy_cache, ruff_cache, etc."""
+    assert ".mypy_cache" in DEFAULT_IGNORED_DIRS
+    assert ".ruff_cache" in DEFAULT_IGNORED_DIRS
+    assert ".tox" in DEFAULT_IGNORED_DIRS
+    assert ".nox" in DEFAULT_IGNORED_DIRS

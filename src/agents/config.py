@@ -10,16 +10,11 @@ from pydantic import BaseModel, Field
 load_dotenv()
 
 
-DEFAULT_IGNORED_DIRS = [
-    ".git",
-    "node_modules",
-    "__pycache__",
-    ".venv",
-    "venv",
-    "dist",
-    "build",
-    ".pytest_cache",
-]
+DEFAULT_IGNORED_DIRS: frozenset[str] = frozenset({
+    ".git", "node_modules", "__pycache__", ".venv", "venv",
+    "dist", "build", ".pytest_cache", ".mypy_cache", ".ruff_cache",
+    "egg-info", ".egg-info", ".tox", ".nox",
+})
 
 
 class Config(BaseModel):
@@ -54,7 +49,7 @@ class Config(BaseModel):
 
     # Scanner Settings
     max_file_size: int = Field(default=1_000_000)  # 1MB
-    ignored_dirs: list[str] = Field(default_factory=lambda: DEFAULT_IGNORED_DIRS.copy())
+    ignored_dirs: list[str] = Field(default_factory=lambda: list(DEFAULT_IGNORED_DIRS))
 
     # Output Settings
     output_dir: Path = Field(default=Path("contexts"))
@@ -81,7 +76,7 @@ class Config(BaseModel):
             except ValueError:
                 return fallback
 
-        ignored_dirs = DEFAULT_IGNORED_DIRS.copy()
+        ignored_dirs = list(DEFAULT_IGNORED_DIRS)
         extra_ignored = os.getenv("IGNORED_DIRS")
         if extra_ignored:
             ignored_dirs.extend(
