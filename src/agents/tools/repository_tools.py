@@ -16,38 +16,26 @@ from ..generator.context_generator import ContextGenerator
 from ..llm.provider import LLMProvider, create_llm_provider
 from ..models import ProjectMetadata, CodeAnalysis
 
-# Context variable for runtime config (set by agent invocation)
-# This allows CLI flags to propagate to tools without breaking tool signatures
-_tool_config: ContextVar[Config] = ContextVar('tool_config', default=None)
+_tool_config: ContextVar[Config | None] = ContextVar('tool_config', default=None)
 
-# Fallback config (used if context var not set)
-_default_config = Config.from_env()
+# Lazily initialized fallback (was import-time; now deferred)
+_default_config: Config | None = None
 
 
 def set_tool_config(config: Config) -> None:
-    """Set the config to be used by tools in this context.
-
-    This should be called before invoking the agent to ensure tools
-    use the correct configuration (including CLI overrides).
-
-    Args:
-        config: Configuration instance with all settings
-    """
+    """Set the config to be used by tools in this context."""
     _tool_config.set(config)
 
 
 def _get_config() -> Config:
-    """Get current config from context or fallback to default.
-
-    Returns:
-        Configuration instance
-    """
+    """Get current config from context or lazily create fallback."""
     config = _tool_config.get(None)
-    if config is None:
-        # Fallback to default config if not set
-        # This maintains backward compatibility
-        return _default_config
-    return config
+    if config is not None:
+        return config
+    global _default_config
+    if _default_config is None:
+        _default_config = Config.from_env()
+    return _default_config
 
 
 def _get_llm_provider() -> LLMProvider:

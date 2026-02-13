@@ -1,6 +1,7 @@
 """Tests for repository analysis tools."""
 
 import pytest
+from contextvars import ContextVar
 from unittest.mock import Mock, patch
 from src.agents.tools.repository_tools import (
     scan_structure,
@@ -334,3 +335,43 @@ class TestRefineContext:
         # Assert
         assert "error" in result
         assert "Failed to refine context" in result["error"]
+
+
+class TestGetConfig:
+    """Tests for _get_config lazy fallback."""
+
+    def test_get_config_returns_context_var_if_set(self):
+        """_get_config should prefer the ContextVar value."""
+        from src.agents.tools.repository_tools import _get_config, set_tool_config
+        from src.agents.config import Config
+
+        config = Config(model_name="test-model")
+        set_tool_config(config)
+
+        result = _get_config()
+        assert result.model_name == "test-model"
+
+    @patch("src.agents.tools.repository_tools.Config.from_env")
+    def test_get_config_lazy_creates_default(self, mock_from_env):
+        """_get_config should lazily create fallback on first call when ContextVar unset."""
+        from src.agents.tools import repository_tools
+        from src.agents.tools.repository_tools import _get_config
+        from src.agents.config import Config
+
+        # Reset module-level state
+        old_default = repository_tools._default_config
+        old_cv = repository_tools._tool_config
+        repository_tools._default_config = None
+        repository_tools._tool_config = ContextVar('tool_config', default=None)
+
+        mock_from_env.return_value = Config()
+
+        try:
+            result = _get_config()
+            assert result is not None
+            assert repository_tools._default_config is not None
+            mock_from_env.assert_called_once()
+        finally:
+            # Restore
+            repository_tools._default_config = old_default
+            repository_tools._tool_config = old_cv
