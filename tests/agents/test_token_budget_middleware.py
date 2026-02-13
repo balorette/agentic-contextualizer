@@ -1,7 +1,5 @@
 """Tests for TokenBudgetMiddleware TPM throttle integration."""
 
-import pytest
-from unittest.mock import MagicMock
 from agents.middleware.token_budget import TokenBudgetMiddleware
 from agents.llm.rate_limiting import TPMThrottle
 

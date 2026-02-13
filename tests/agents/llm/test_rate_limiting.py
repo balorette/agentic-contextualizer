@@ -42,7 +42,7 @@ class TestTPMThrottle:
         start = time.monotonic()
         # Use a very short window for testing by monkey-patching
         throttle._window_seconds = 0.3
-        waited = throttle.wait_if_needed(200)
+        throttle.wait_if_needed(200)
         elapsed = time.monotonic() - start
         assert elapsed >= 0.2  # Should have waited near window expiry
 
@@ -85,8 +85,7 @@ class TestTPMThrottle:
         assert throttle.current_usage == num_threads * tokens_per_thread
 
 
-from datetime import datetime, timezone
-from agents.llm.rate_limiting import RetryHandler, RateLimitInfo, TPMExhaustedError
+from agents.llm.rate_limiting import RetryHandler, TPMExhaustedError
 
 
 class TestRetryHandler:
