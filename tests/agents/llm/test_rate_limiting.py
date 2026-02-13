@@ -258,3 +258,16 @@ class TestRateLimitedProvider:
         result = provider.generate_structured("hello", schema=TestSchema)
         assert result.name == "test"
         assert inner.call_count == 1
+
+    def test_generate_structured_records_estimated_usage(self):
+        """Structured calls (no tokens_used) should fall back to estimated usage."""
+        from pydantic import BaseModel
+
+        class TestSchema(BaseModel):
+            name: str
+            count: int
+
+        provider, inner, throttle = self._make_provider(estimate=200)
+        provider.generate_structured("hello", schema=TestSchema)
+        # Structured response has no tokens_used, should record estimate
+        assert throttle.current_usage == 200

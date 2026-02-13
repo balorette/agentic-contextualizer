@@ -263,10 +263,13 @@ class RateLimitedProvider(LLMProvider):
         # Layer 3: Call with retry handling
         result = self.retry_handler.execute_with_retry(fn, prompt, system=system, **kwargs)
 
-        # Record actual usage
+        # Record actual usage; fall back to estimate for structured responses
+        # (Pydantic models don't carry tokens_used)
         tokens_used = getattr(result, "tokens_used", None)
         if tokens_used:
             self.throttle.record_usage(tokens_used)
+        else:
+            self.throttle.record_usage(estimated)
 
         return result
 
