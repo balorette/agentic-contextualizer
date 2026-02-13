@@ -124,15 +124,21 @@ class State(TypedDict):
 
 
 def create_customer_support_agent():
-    model = os.getenv("MODEL")
+    model = os.getenv("MODEL_NAME") or os.getenv("MODEL")
     base_url = os.getenv("LLM_BASE_URL")
-    api_key = os.getenv("LLM_API_KEY")
+    api_key = (
+        os.getenv("OPENAI_API_KEY")
+        or os.getenv("ANTHROPIC_API_KEY")
+        or os.getenv("LLM_API_KEY")
+    )
     if not model:
-        raise RuntimeError("Missing required env var: MODEL")
+        raise RuntimeError("Missing required env var: MODEL_NAME (or MODEL)")
     if not base_url:
         raise RuntimeError("Missing required env var: LLM_BASE_URL")
     if api_key is None:
-        raise RuntimeError("Missing required env var: LLM_API_KEY")
+        raise RuntimeError(
+            "Missing required env var: OPENAI_API_KEY, ANTHROPIC_API_KEY, or LLM_API_KEY"
+        )
 
     verify_ssl = _env_flag("LLM_VERIFY_SSL", default=True)
     http_client = None
