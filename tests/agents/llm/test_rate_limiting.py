@@ -55,6 +55,17 @@ class TestTPMThrottle:
         time.sleep(0.3)  # Wait for entries to expire
         assert throttle.current_usage == 0
 
+    def test_wait_if_needed_allows_oversized_call_on_empty_window(self):
+        """Should allow a call through when estimated exceeds limit but window is empty.
+
+        Without this fix, the throttle loops forever because there are
+        no entries to expire, yet estimated_tokens > effective_limit.
+        """
+        throttle = TPMThrottle(max_tpm=1000, safety_factor=1.0)
+        # estimated 5000 >> limit 1000, but window is empty
+        waited = throttle.wait_if_needed(5000)
+        assert waited == 0.0
+
     def test_thread_safety(self):
         """Concurrent record_usage calls should not lose data."""
         throttle = TPMThrottle(max_tpm=100000, safety_factor=1.0)

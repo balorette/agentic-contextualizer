@@ -63,6 +63,18 @@ class TPMThrottle:
                 if usage + estimated_tokens <= self.effective_limit:
                     return total_waited
 
+                # If the window is empty but the estimate alone exceeds the
+                # limit, let the call through — blocking would loop forever
+                # since there are no entries to expire.
+                if not self._usage_log:
+                    logger.warning(
+                        "TPM throttle: estimated %d tokens exceeds effective "
+                        "limit %d but window is empty — allowing call through",
+                        estimated_tokens,
+                        self.effective_limit,
+                    )
+                    return total_waited
+
                 # Calculate wait time until enough old entries expire
                 needed = (usage + estimated_tokens) - self.effective_limit
                 freed = 0
