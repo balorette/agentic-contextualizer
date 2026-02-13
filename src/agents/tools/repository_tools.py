@@ -1,9 +1,12 @@
 """LangChain tool wrappers for repository analysis pipeline."""
 
+import logging
 from pathlib import Path, PurePosixPath
 from typing import Any
 from contextvars import ContextVar
 from langchain_core.tools import tool
+
+logger = logging.getLogger(__name__)
 
 from ..config import Config
 from ..scanner.structure import StructureScanner
@@ -127,7 +130,10 @@ def scan_structure(repo_path: str) -> dict[str, Any]:
             "total_files": result["total_files"],
             "total_dirs": result["total_dirs"],
         }
+    except (OSError, ValueError) as e:
+        return {"error": f"Failed to scan repository: {str(e)}"}
     except Exception as e:
+        logger.exception("Unexpected error in scan_structure")
         return {"error": f"Failed to scan repository: {str(e)}"}
 
 
@@ -151,7 +157,10 @@ def extract_metadata(repo_path: str) -> dict[str, Any]:
             "entry_points": metadata.entry_points,
             "key_files": metadata.key_files[:20],  # Limit for tokens
         }
+    except (OSError, ValueError) as e:
+        return {"error": f"Failed to extract metadata: {str(e)}"}
     except Exception as e:
+        logger.exception("Unexpected error in extract_metadata")
         return {"error": f"Failed to extract metadata: {str(e)}"}
 
 
@@ -196,7 +205,10 @@ def analyze_code(
             "tech_stack": analysis.tech_stack,
             "insights": analysis.insights,
         }
+    except (OSError, ValueError, RuntimeError) as e:
+        return {"error": f"Failed to analyze code: {str(e)}"}
     except Exception as e:
+        logger.exception("Unexpected error in analyze_code")
         return {"error": f"Failed to analyze code: {str(e)}"}
 
 
@@ -248,7 +260,10 @@ def generate_context(
             "context_md": content[:500] + "..." if len(content) > 500 else content,
             "output_path": str(output_path),
         }
+    except (OSError, ValueError, RuntimeError) as e:
+        return {"error": f"Failed to generate context: {str(e)}"}
     except Exception as e:
+        logger.exception("Unexpected error in generate_context")
         return {"error": f"Failed to generate context: {str(e)}"}
 
 
@@ -274,5 +289,8 @@ def refine_context(context_file_path: str, refinement_request: str) -> dict[str,
             "updated_context": content[:500] + "..." if len(content) > 500 else content,
             "output_path": str(updated_path),
         }
+    except (OSError, ValueError, RuntimeError) as e:
+        return {"error": f"Failed to refine context: {str(e)}"}
     except Exception as e:
+        logger.exception("Unexpected error in refine_context")
         return {"error": f"Failed to refine context: {str(e)}"}

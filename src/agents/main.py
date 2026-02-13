@@ -1,8 +1,11 @@
 """Main CLI entry point for Agentic Contextualizer."""
 
+import logging
 import subprocess
 import click
 import yaml
+
+logger = logging.getLogger(__name__)
 from pathlib import Path
 from .config import Config
 from .scanner.structure import StructureScanner
@@ -40,9 +43,12 @@ def _extract_repo_from_context(context_path: Path) -> str | None:
 
         if isinstance(frontmatter, dict):
             return frontmatter.get("source_repo")
+    except yaml.YAMLError:
+        logger.warning("Failed to parse frontmatter from %s", context_path)
+    except OSError as e:
+        logger.warning("Failed to read context file %s: %s", context_path, e)
     except Exception:
-        # YAML parse errors, file read errors, etc.
-        pass
+        logger.warning("Unexpected error extracting repo from %s", context_path, exc_info=True)
     return None
 
 
