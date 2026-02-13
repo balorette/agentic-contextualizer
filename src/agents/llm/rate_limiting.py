@@ -78,7 +78,6 @@ class TPMThrottle:
                 # Calculate wait time until enough old entries expire
                 needed = (usage + estimated_tokens) - self.effective_limit
                 freed = 0
-                wait_until = time.monotonic()
                 for ts, count in self._usage_log:
                     freed += count
                     if freed >= needed:
@@ -180,8 +179,15 @@ class RetryHandler:
             reset_str = headers.get("anthropic-ratelimit-input-tokens-reset")
             if reset_str:
                 try:
-                    reset_at = datetime.fromisoformat(reset_str)
+                    # Normalize RFC3339 trailing 'Z' (UTC) which
+                    # datetime.fromisoformat() doesn't accept in Python <3.11
+                    normalized = reset_str.strip()
+                    if normalized.endswith("Z"):
+                        normalized = normalized[:-1] + "+00:00"
+                    reset_at = datetime.fromisoformat(normalized)
                 except ValueError:
+                    # Unparseable timestamp — leave reset_at as None rather
+                    # than failing the entire rate-limit info extraction.
                     pass
             return RateLimitInfo(
                 input_tokens_remaining=int(
