@@ -8,44 +8,31 @@ from .file import KEY_FILE_PATTERNS
 
 
 @tool
-def list_key_files(file_tree: dict[str, Any]) -> dict[str, list[str]]:
-    """Categorize key files (configs, entry_points, docs) from a file tree structure.
+def list_key_files(file_list: list[str]) -> dict[str, list[str]]:
+    """Categorize key files (configs, entry_points, docs) from a file list.
 
     Args:
-        file_tree: File tree dictionary from scan_structure tool
+        file_list: List of repo-relative file paths from scan_structure tool
 
     Returns:
         Dictionary with configs, entry_points, docs, and all_key_files lists.
     """
-    found_files = {
+    found_files: dict[str, list[str]] = {
         "configs": [],
         "entry_points": [],
         "docs": [],
     }
 
-    def scan_tree(node: dict[str, Any], current_path: str = ""):
-        """Recursively scan tree for key files."""
-        if node.get("type") == "file":
-            file_name = node.get("name", "")
-            file_path = node.get("path", current_path)
+    for file_path in file_list:
+        file_name = file_path.rsplit("/", 1)[-1] if "/" in file_path else file_path
 
-            # Check each category
-            for category, patterns in KEY_FILE_PATTERNS.items():
-                for pattern in patterns:
-                    if file_name == pattern or file_path.endswith(pattern):
-                        found_files[category].append(file_path)
-                        break
+        for category, patterns in KEY_FILE_PATTERNS.items():
+            for pattern in patterns:
+                if file_name == pattern or file_path.endswith(pattern):
+                    found_files[category].append(file_path)
+                    break
 
-        elif node.get("type") == "directory":
-            for child in node.get("children", []):
-                child_path = f"{current_path}/{child.get('name', '')}" if current_path else child.get("name", "")
-                scan_tree(child, child_path)
-
-    # Scan the tree
-    scan_tree(file_tree)
-
-    # Create combined list
-    all_key_files = []
+    all_key_files: list[str] = []
     for category_files in found_files.values():
         all_key_files.extend(category_files)
 
