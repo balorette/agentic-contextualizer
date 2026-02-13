@@ -38,6 +38,17 @@ def test_config_from_env_provider_keys(monkeypatch):
     assert config.google_api_key == "test-google-key"
 
 
+def test_base_url_auto_switches_to_litellm(monkeypatch):
+    """Setting LLM_BASE_URL should auto-switch provider to litellm."""
+    monkeypatch.setenv("LLM_BASE_URL", "https://my-gateway.example.com")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    monkeypatch.delenv("LLM_PROVIDER", raising=False)
+
+    config = Config.from_env()
+    assert config.llm_provider == "litellm"
+    assert config.api_base_url == "https://my-gateway.example.com"
+
+
 def test_config_cli_overrides(monkeypatch):
     """Test CLI overrides take precedence over env vars."""
     monkeypatch.setenv("LLM_PROVIDER", "anthropic")

@@ -90,8 +90,13 @@ class Config(BaseModel):
         # Read base URL with fallback for backward compatibility
         base_url = os.getenv("LLM_BASE_URL") or os.getenv("ANTHROPIC_BASE_URL")
 
+        # Auto-switch to litellm when a custom base URL is set (as documented in .env.example)
+        llm_provider = os.getenv("LLM_PROVIDER", "anthropic")
+        if base_url and llm_provider == "anthropic" and not os.getenv("LLM_PROVIDER"):
+            llm_provider = "litellm"
+
         config_dict = {
-            "llm_provider": os.getenv("LLM_PROVIDER", "anthropic"),
+            "llm_provider": llm_provider,
             "model_name": os.getenv("MODEL_NAME", "claude-3-5-sonnet-20241022"),
             "api_key": os.getenv("ANTHROPIC_API_KEY"),
             "api_base_url": base_url,
