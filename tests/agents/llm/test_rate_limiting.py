@@ -147,3 +147,103 @@ class TestRetryHandler:
         handler = RetryHandler()
         info = handler.extract_rate_limit_info({"content-type": "application/json"})
         assert info is None
+
+
+from agents.llm.rate_limiting import RateLimitedProvider, TokenBudgetExceededError
+from agents.llm.provider import LLMResponse
+
+
+class FakeProvider:
+    """Minimal LLMProvider stub for testing."""
+
+    def __init__(self, response_tokens: int = 100):
+        self.model_name = "test-model"
+        self.response_tokens = response_tokens
+        self.call_count = 0
+
+    def generate(self, prompt, system=None):
+        self.call_count += 1
+        return LLMResponse(
+            content="response",
+            model=self.model_name,
+            tokens_used=self.response_tokens,
+        )
+
+    def generate_structured(self, prompt, system=None, schema=None):
+        self.call_count += 1
+        if schema:
+            return schema(name="test", count=1)
+        return None
+
+
+class FakeEstimator:
+    """Returns a fixed token estimate."""
+
+    def __init__(self, estimate_value: int = 50):
+        self.estimate_value = estimate_value
+
+    def estimate(self, messages, model):
+        return self.estimate_value
+
+
+class TestRateLimitedProvider:
+    """Tests for the RateLimitedProvider decorator."""
+
+    def _make_provider(self, max_tpm=30000, estimate=50, response_tokens=100, max_tokens_per_call=None):
+        inner = FakeProvider(response_tokens=response_tokens)
+        throttle = TPMThrottle(max_tpm=max_tpm, safety_factor=1.0)
+        estimator = FakeEstimator(estimate_value=estimate)
+        retry_handler = RetryHandler(max_attempts=1, initial_wait=0.01)
+        provider = RateLimitedProvider(
+            provider=inner,
+            throttle=throttle,
+            estimator=estimator,
+            retry_handler=retry_handler,
+            max_tokens_per_call=max_tokens_per_call,
+        )
+        return provider, inner, throttle
+
+    def test_generate_delegates_to_inner(self):
+        """Should call inner provider's generate and return its response."""
+        provider, inner, _ = self._make_provider()
+        result = provider.generate("hello", system="sys")
+        assert result.content == "response"
+        assert inner.call_count == 1
+
+    def test_generate_records_usage(self):
+        """Should record actual token usage in throttle after call."""
+        provider, _, throttle = self._make_provider(response_tokens=500)
+        provider.generate("hello")
+        assert throttle.current_usage == 500
+
+    def test_generate_rejects_over_per_call_limit(self):
+        """Should raise TokenBudgetExceededError if estimate exceeds per-call cap."""
+        provider, inner, _ = self._make_provider(
+            estimate=9000, max_tokens_per_call=8000
+        )
+        with pytest.raises(TokenBudgetExceededError, match="9000.*exceeds.*8000"):
+            provider.generate("huge prompt")
+        assert inner.call_count == 0  # Never called
+
+    def test_generate_waits_when_throttled(self):
+        """Should wait when approaching TPM limit."""
+        provider, _, throttle = self._make_provider(max_tpm=1000, estimate=200)
+        throttle._window_seconds = 0.3
+        throttle.record_usage(900)
+        start = time.monotonic()
+        provider.generate("hello")
+        elapsed = time.monotonic() - start
+        assert elapsed >= 0.2  # Had to wait for window to expire
+
+    def test_generate_structured_delegates(self):
+        """Should work for generate_structured too."""
+        from pydantic import BaseModel
+
+        class TestSchema(BaseModel):
+            name: str
+            count: int
+
+        provider, inner, _ = self._make_provider()
+        result = provider.generate_structured("hello", schema=TestSchema)
+        assert result.name == "test"
+        assert inner.call_count == 1

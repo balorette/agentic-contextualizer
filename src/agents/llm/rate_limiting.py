@@ -188,3 +188,78 @@ class RetryHandler:
             )
 
         return None
+
+
+from typing import Type
+from pydantic import BaseModel as PydanticBaseModel
+
+from .provider import LLMProvider, LLMResponse
+from .token_estimator import TokenEstimator
+
+
+class RateLimitedProvider(LLMProvider):
+    """Decorator that adds TPM rate limiting to any LLMProvider.
+
+    Composes: TokenEstimator -> TPMThrottle -> RetryHandler -> inner provider.
+    Implements LLMProvider so it's a drop-in replacement.
+    """
+
+    def __init__(
+        self,
+        provider: LLMProvider,
+        throttle: TPMThrottle,
+        estimator: TokenEstimator,
+        retry_handler: RetryHandler,
+        max_tokens_per_call: Optional[int] = None,
+    ):
+        self.provider = provider
+        self.throttle = throttle
+        self.estimator = estimator
+        self.retry_handler = retry_handler
+        self.max_tokens_per_call = max_tokens_per_call
+        self.model_name = getattr(provider, "model_name", "unknown")
+
+    def _build_messages(self, prompt: str, system: Optional[str] = None) -> list[dict]:
+        """Build message dicts for token estimation."""
+        messages = []
+        if system:
+            messages.append({"role": "system", "content": system})
+        messages.append({"role": "user", "content": prompt})
+        return messages
+
+    def _rate_limited_call(
+        self, fn: Callable[..., Any], prompt: str, system: Optional[str] = None, **kwargs: Any,
+    ) -> Any:
+        """Shared rate-limiting flow for generate() and generate_structured()."""
+        # Layer 1: Estimate and reject if over per-call cap
+        messages = self._build_messages(prompt, system)
+        estimated = self.estimator.estimate(messages, self.model_name)
+        if self.max_tokens_per_call and estimated > self.max_tokens_per_call:
+            raise TokenBudgetExceededError(
+                f"Estimated {estimated} tokens exceeds per-call limit of {self.max_tokens_per_call}"
+            )
+
+        # Layer 2: Wait if approaching TPM limit
+        self.throttle.wait_if_needed(estimated)
+
+        # Layer 3: Call with retry handling
+        result = self.retry_handler.execute_with_retry(fn, prompt, system=system, **kwargs)
+
+        # Record actual usage
+        tokens_used = getattr(result, "tokens_used", None)
+        if tokens_used:
+            self.throttle.record_usage(tokens_used)
+
+        return result
+
+    def generate(self, prompt: str, system: Optional[str] = None) -> LLMResponse:
+        """Rate-limited generate."""
+        return self._rate_limited_call(self.provider.generate, prompt, system=system)
+
+    def generate_structured(
+        self, prompt: str, system: Optional[str] = None, schema: Type[PydanticBaseModel] = None,
+    ) -> PydanticBaseModel:
+        """Rate-limited structured generate."""
+        return self._rate_limited_call(
+            self.provider.generate_structured, prompt, system=system, schema=schema,
+        )
