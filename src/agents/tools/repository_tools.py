@@ -1,6 +1,6 @@
 """LangChain tool wrappers for repository analysis pipeline."""
 
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 from contextvars import ContextVar
 from langchain_core.tools import tool
@@ -88,7 +88,9 @@ def _flatten_tree(root: dict) -> list[str]:
     def _walk(node: dict, prefix: str) -> list[str]:
         paths: list[str] = []
         name = node.get("name", "")
-        path = f"{prefix}/{name}" if prefix else name
+        # Use PurePosixPath for consistent forward-slash separators
+        # regardless of host OS (context files are portable)
+        path = str(PurePosixPath(prefix) / name) if prefix else name
         if node.get("type") == "file":
             paths.append(path)
         elif node.get("type") == "directory":

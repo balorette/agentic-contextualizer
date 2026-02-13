@@ -1,10 +1,14 @@
 """LiteLLM provider for multi-provider LLM support."""
 
 import json
+import logging
+import re
 from typing import Optional, Type
 from pydantic import BaseModel
 import litellm
 from .provider import LLMProvider, LLMResponse
+
+logger = logging.getLogger(__name__)
 
 
 class LiteLLMProvider(LLMProvider):
@@ -147,9 +151,24 @@ class LiteLLMProvider(LLMProvider):
             data = json.loads(content)
             return schema(**data)
 
-        except json.JSONDecodeError as e:
+        except json.JSONDecodeError:
+            logger.warning(
+                "JSON mode response was not valid JSON for model %s, "
+                "attempting to extract from markdown code block",
+                self.model_name,
+            )
+            # Try extracting JSON from markdown code block (```json ... ```)
+            match = re.search(r"```(?:json)?\s*\n(.*?)\n```", content, re.DOTALL)
+            if match:
+                try:
+                    data = json.loads(match.group(1))
+                    return schema(**data)
+                except (json.JSONDecodeError, Exception) as inner_e:
+                    raise RuntimeError(
+                        f"Failed to parse JSON from code block: {str(inner_e)}\nContent: {content}"
+                    ) from inner_e
             raise RuntimeError(
-                f"Failed to parse JSON response: {str(e)}\nContent: {content}"
-            ) from e
+                f"Failed to parse JSON response and no code block found.\nContent: {content}"
+            )
         except Exception as e:
             raise RuntimeError(f"Structured generation failed: {str(e)}") from e

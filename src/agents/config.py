@@ -89,6 +89,11 @@ class Config(BaseModel):
 
         # Read base URL with fallback for backward compatibility
         base_url = os.getenv("LLM_BASE_URL") or os.getenv("ANTHROPIC_BASE_URL")
+        if base_url and not base_url.startswith(("http://", "https://")):
+            raise ValueError(
+                f"Invalid LLM_BASE_URL: '{base_url}'. "
+                "Must start with http:// or https://"
+            )
 
         # Auto-switch to litellm when a custom base URL is set (as documented in .env.example)
         llm_provider = os.getenv("LLM_PROVIDER", "anthropic")
