@@ -392,6 +392,25 @@ class TestCLIErrorHandling:
         assert result.exit_code == 1 or mock_agent.return_value == 1
 
 
+class TestValidateApiKeyGateway:
+    """Test gateway API key validation."""
+
+    def test_validate_api_key_gateway_with_google_key(self):
+        """Gateway mode should accept google_api_key as valid."""
+        from src.agents.main import _validate_api_key
+        from agents.config import Config
+
+        config = Config(
+            llm_provider="litellm",
+            model_name="gemini-1.5-pro",
+            api_base_url="https://gateway.example.com",
+            google_api_key="test-google-key",
+        )
+        is_valid, error_msg = _validate_api_key(config)
+        assert is_valid is True
+        assert error_msg == ""
+
+
 class TestCLIModeSelection:
     """Test mode selection logic."""
 

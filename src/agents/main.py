@@ -64,9 +64,9 @@ def _validate_api_key(config: Config) -> tuple[bool, str]:
     if config.llm_provider == "litellm":
         if config.api_base_url:
             # Gateway mode - any key set is fine, the gateway handles routing
-            has_any_key = config.openai_api_key or config.anthropic_api_key or config.api_key
+            has_any_key = config.openai_api_key or config.anthropic_api_key or config.google_api_key or config.api_key
             if not has_any_key:
-                return False, "Error: No API key set. Set OPENAI_API_KEY or ANTHROPIC_API_KEY for gateway auth."
+                return False, "Error: No API key set. Set OPENAI_API_KEY, ANTHROPIC_API_KEY, or GOOGLE_API_KEY for gateway auth."
             return True, ""
 
         # Direct LiteLLM (no gateway) - need provider-specific keys
