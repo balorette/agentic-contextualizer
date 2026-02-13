@@ -316,6 +316,26 @@ class TestAgentMessageHandling:
             assert isinstance(messages[0]["content"], str)
 
 
+class TestAgentWithCheckpointer:
+    """Test create_contextualizer_agent_with_checkpointer."""
+
+    def test_requires_checkpointer(self):
+        from src.agents.factory import create_contextualizer_agent_with_checkpointer
+
+        with pytest.raises(ValueError, match="checkpointer is required"):
+            create_contextualizer_agent_with_checkpointer(checkpointer=None)
+
+    def test_creates_agent_with_checkpointer(self):
+        from src.agents.factory import create_contextualizer_agent_with_checkpointer
+
+        checkpointer = create_checkpointer()
+        agent = create_contextualizer_agent_with_checkpointer(
+            checkpointer=checkpointer
+        )
+        assert agent is not None
+        assert hasattr(agent, "invoke")
+
+
 def test_agent_middleware_has_throttle(monkeypatch):
     """Agent factory should pass TPM throttle to middleware."""
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")

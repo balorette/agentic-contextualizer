@@ -187,7 +187,7 @@ def create_contextualizer_agent_with_budget(
     return agent, tracker
 
 
-def create_contextualizer_agent_with_hitl(
+def create_contextualizer_agent_with_checkpointer(
     model_name: str = "anthropic:claude-sonnet-4-5-20250929",
     checkpointer: Optional[object] = None,
     debug: bool = False,
@@ -196,57 +196,32 @@ def create_contextualizer_agent_with_hitl(
     api_key: Optional[str] = None,
     use_litellm: bool = False,
 ):
-    """Create agent with human-in-the-loop for expensive operations.
+    """Create agent with state persistence via checkpointer.
 
-    Note: This requires a checkpointer to be enabled for interrupts to work.
-    Human-in-the-loop is implemented using LangGraph's interrupt() function
-    within tools. The agent will pause and wait for approval before executing
-    expensive operations.
+    This creates an agent with checkpointing enabled, which is a
+    prerequisite for future human-in-the-loop approval gates.
+
+    Note: This does NOT currently implement automatic approval gates.
+    Tools do not call interrupt() by default. See docs/roadmap/hitl-approval-gates.md
+    for the planned HITL implementation.
+
+    # ROADMAP: Wire create_approval_tool() wrappers for tools listed in
+    # require_approval_for. See docs/roadmap/hitl-approval-gates.md
 
     Args:
         model_name: LLM model identifier
-        checkpointer: Checkpointer for state persistence (REQUIRED for HITL)
+        checkpointer: Checkpointer for state persistence (REQUIRED)
         debug: Enable verbose logging
-        require_approval_for: List of tool names requiring approval
-            Default: ["analyze_code", "generate_context", "refine_context"]
+        require_approval_for: Reserved for future HITL implementation
+        base_url: Optional custom API endpoint URL
+        api_key: Optional API key
+        use_litellm: Force use of ChatLiteLLM
 
     Returns:
-        Compiled StateGraph agent with human-in-the-loop
-
-    Example:
-        ```python
-        from src.agents.factory import create_contextualizer_agent_with_hitl
-        from src.agents.memory import create_checkpointer, create_agent_config
-        from langgraph.types import Command
-
-        # MUST have checkpointer for HITL
-        checkpointer = create_checkpointer()
-        agent = create_contextualizer_agent_with_hitl(checkpointer=checkpointer)
-
-        config = create_agent_config("/path/to/repo")
-
-        # Start agent - it will pause at expensive operations
-        result = agent.invoke({"messages": [...]}, config=config)
-
-        # Check if interrupted
-        state = agent.get_state(config)
-        if state.next == ("__interrupt__",):
-            print("Approval required:", state.values.get("__interrupt__"))
-
-            # Approve
-            final_result = agent.invoke(
-                Command(resume={"type": "approve"}),
-                config=config
-            )
-        ```
+        Compiled StateGraph agent with checkpointing
 
     Raises:
-        ValueError: If checkpointer is not provided (required for interrupts)
-
-    Note:
-        To actually use interrupts, tools must call interrupt() internally.
-        The tools in this codebase don't have interrupts built-in by default.
-        Use create_approval_tool() to wrap tools with approval logic.
+        ValueError: If checkpointer is not provided
     """
     if checkpointer is None:
         raise ValueError(
@@ -273,7 +248,7 @@ def create_contextualizer_agent_with_hitl(
     )
 
     if debug:
-        print(f"✓ Human-in-the-loop enabled for: {', '.join(require_approval_for)}")
-        print("  Note: Tools must call interrupt() to pause for approval")
+        print(f"✓ Checkpointing enabled. Approval gates reserved for: {', '.join(require_approval_for)}")
+        print("  Note: HITL approval gates are not yet wired. See docs/roadmap/hitl-approval-gates.md")
 
     return agent
