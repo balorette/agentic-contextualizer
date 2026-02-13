@@ -40,6 +40,7 @@ def create_contextualizer_agent(
     base_url: Optional[str] = None,
     api_key: Optional[str] = None,
     use_litellm: bool = False,
+    config: Optional["Config"] = None,
 ):
     """Create a repository contextualizer agent.
 
@@ -82,7 +83,12 @@ def create_contextualizer_agent(
     from .config import Config
     from .llm.chat_model_factory import build_chat_model, build_token_middleware
 
-    config = Config.from_env()
+    if config is None:
+        config = Config.from_env()
+
+    # Derive use_litellm from config when caller didn't explicitly set it
+    if not use_litellm and config.llm_provider == "litellm":
+        use_litellm = True
     model = build_chat_model(
         config=config,
         model_name=model_name,
@@ -128,6 +134,7 @@ def create_contextualizer_agent_with_budget(
     base_url: Optional[str] = None,
     api_key: Optional[str] = None,
     use_litellm: bool = False,
+    config: Optional["Config"] = None,
 ):
     """Create agent with budget tracking for token/cost monitoring.
 
@@ -180,6 +187,7 @@ def create_contextualizer_agent_with_budget(
         base_url=base_url,
         api_key=api_key,
         use_litellm=use_litellm,
+        config=config,
     )
 
     tracker = BudgetTracker(max_tokens=max_tokens, max_cost_usd=max_cost_usd)
@@ -195,6 +203,7 @@ def create_contextualizer_agent_with_checkpointer(
     base_url: Optional[str] = None,
     api_key: Optional[str] = None,
     use_litellm: bool = False,
+    config: Optional["Config"] = None,
 ):
     """Create agent with state persistence via checkpointer.
 
@@ -245,6 +254,7 @@ def create_contextualizer_agent_with_checkpointer(
         base_url=base_url,
         api_key=api_key,
         use_litellm=use_litellm,
+        config=config,
     )
 
     if debug:

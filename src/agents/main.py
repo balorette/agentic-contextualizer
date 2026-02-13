@@ -297,6 +297,7 @@ def _generate_agent_mode(repo: Path, summary: str, config: Config, debug: bool, 
         debug=debug,
         base_url=config.api_base_url,
         api_key=api_key,
+        config=config,
     )
 
     # Create agent configuration with thread ID
@@ -399,6 +400,7 @@ def _refine_agent_mode(context_path: Path, request: str, config: Config, debug: 
         debug=debug,
         base_url=config.api_base_url,
         api_key=api_key,
+        config=config,
     )
 
     # Use same thread ID as generation (based on repo path)
@@ -627,6 +629,7 @@ def _scope_agent_mode(
         debug=debug,
         api_key=api_key,
         base_url=config.api_base_url,
+        config=config,
     )
 
     # Create agent configuration

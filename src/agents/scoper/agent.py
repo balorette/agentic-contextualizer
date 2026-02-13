@@ -99,6 +99,7 @@ def create_scoped_agent(
     base_url: Optional[str] = None,
     api_key: Optional[str] = None,
     use_litellm: bool = False,
+    config: Optional["Config"] = None,
 ):
     """Create a scoped context generation agent.
 
@@ -134,7 +135,12 @@ def create_scoped_agent(
     backend = file_backend or LocalFileBackend(repo_path)
 
     # Initialize chat model
-    config = Config.from_env()
+    if config is None:
+        config = Config.from_env()
+
+    # Derive use_litellm from config when caller didn't explicitly set it
+    if not use_litellm and config.llm_provider == "litellm":
+        use_litellm = True
 
     from ..llm.chat_model_factory import build_chat_model, build_token_middleware
 
@@ -244,6 +250,7 @@ def create_scoped_agent_with_budget(
     output_dir: str = "contexts",
     debug: bool = False,
     base_url: Optional[str] = None,
+    config: Optional["Config"] = None,
 ):
     """Create scoped agent with budget tracking.
 
@@ -269,6 +276,7 @@ def create_scoped_agent_with_budget(
         output_dir=output_dir,
         debug=debug,
         base_url=base_url,
+        config=config,
     )
 
     tracker = BudgetTracker(max_tokens=max_tokens, max_cost_usd=max_cost_usd)
