@@ -21,6 +21,10 @@ _tool_config: ContextVar[Config | None] = ContextVar('tool_config', default=None
 # Lazily initialized fallback (was import-time; now deferred)
 _default_config: Config | None = None
 
+# Cached LLM provider so consecutive tool calls share TPM throttle state
+_cached_provider: LLMProvider | None = None
+_cached_provider_config_id: int | None = None
+
 
 def set_tool_config(config: Config) -> None:
     """Set the config to be used by tools in this context."""
@@ -39,13 +43,23 @@ def _get_config() -> Config:
 
 
 def _get_llm_provider() -> LLMProvider:
-    """Get LLM provider instance from current config.
+    """Get or create a cached LLM provider for the current config.
+
+    Caching ensures that consecutive tool calls (e.g. analyze_code then
+    generate_context) share the same TPMThrottle window rather than each
+    getting a fresh budget.
 
     Returns:
-        Configured LLM provider
+        Configured LLM provider (cached per config identity)
     """
+    global _cached_provider, _cached_provider_config_id
     config = _get_config()
-    return create_llm_provider(config)
+    config_id = id(config)
+    if _cached_provider is not None and _cached_provider_config_id == config_id:
+        return _cached_provider
+    _cached_provider = create_llm_provider(config)
+    _cached_provider_config_id = config_id
+    return _cached_provider
 
 
 def _get_scanner() -> StructureScanner:
@@ -65,7 +79,7 @@ def _get_context_generator() -> ContextGenerator:
         Configured context generator
     """
     config = _get_config()
-    llm = create_llm_provider(config)
+    llm = _get_llm_provider()
     return ContextGenerator(llm, config.output_dir)
 
 

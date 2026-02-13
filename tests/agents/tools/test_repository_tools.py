@@ -375,3 +375,53 @@ class TestGetConfig:
             # Restore
             repository_tools._default_config = old_default
             repository_tools._tool_config = old_cv
+
+
+class TestGetLlmProvider:
+    """Tests for _get_llm_provider caching."""
+
+    @patch("src.agents.tools.repository_tools.create_llm_provider")
+    def test_get_llm_provider_returns_same_instance(self, mock_create):
+        """Consecutive calls should return the same cached provider."""
+        from src.agents.tools import repository_tools
+        from src.agents.tools.repository_tools import _get_llm_provider
+
+        mock_create.return_value = Mock()
+        old_cached = repository_tools._cached_provider
+        repository_tools._cached_provider = None
+
+        try:
+            p1 = _get_llm_provider()
+            p2 = _get_llm_provider()
+            assert p1 is p2
+            mock_create.assert_called_once()
+        finally:
+            repository_tools._cached_provider = old_cached
+
+    @patch("src.agents.tools.repository_tools.create_llm_provider")
+    def test_get_llm_provider_invalidates_on_config_change(self, mock_create):
+        """Changing config should create a new provider."""
+        from src.agents.tools import repository_tools
+        from src.agents.tools.repository_tools import _get_llm_provider, set_tool_config
+        from src.agents.config import Config
+
+        mock_create.side_effect = [Mock(), Mock()]
+        old_cached = repository_tools._cached_provider
+        old_config_id = repository_tools._cached_provider_config_id
+        repository_tools._cached_provider = None
+        repository_tools._cached_provider_config_id = None
+
+        try:
+            config_a = Config(model_name="model-a")
+            set_tool_config(config_a)
+            p1 = _get_llm_provider()
+
+            config_b = Config(model_name="model-b")
+            set_tool_config(config_b)
+            p2 = _get_llm_provider()
+
+            assert p1 is not p2
+            assert mock_create.call_count == 2
+        finally:
+            repository_tools._cached_provider = old_cached
+            repository_tools._cached_provider_config_id = old_config_id
