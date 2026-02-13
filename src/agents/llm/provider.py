@@ -41,7 +41,7 @@ class AnthropicProvider(LLMProvider):
     @staticmethod
     def _rl() -> InMemoryRateLimiter:
         return InMemoryRateLimiter(
-            requests_per_second=0.7,  # <-- Super slow! We can only make a request once every 10 seconds!!
+            requests_per_second=0.7,  # ~0.7 req/sec, approx one request every ~1.4 seconds
             check_every_n_seconds=0.1,  # Wake up every 100 ms to check whether allowed to make a request,
             max_bucket_size=20,  # Controls the maximum burst size.
         )
