@@ -95,8 +95,8 @@ class LiteLLMProvider(LLMProvider):
     ) -> BaseModel:
         """Generate structured output using Pydantic schema.
 
-        Uses provider-specific structured output when available,
-        falls back to JSON mode + parsing for others.
+        Uses JSON mode for broad compatibility across providers,
+        then parses the response against the provided Pydantic schema.
 
         Args:
             prompt: User prompt

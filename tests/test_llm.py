@@ -102,31 +102,19 @@ def test_litellm_provider_auth_error(mocker):
 
 
 def test_litellm_provider_generate_structured(mocker):
-    """Test LiteLLMProvider.generate_structured() with JSON fallback."""
-    import json
+    """Test LiteLLMProvider.generate_structured() uses JSON mode."""
     from pydantic import BaseModel
 
     class TestSchema(BaseModel):
         name: str
         count: int
 
-    # Mock to simulate fallback to JSON mode
-    call_count = [0]
+    mock_response = mocker.Mock()
+    mock_response.choices = [
+        mocker.Mock(message=mocker.Mock(content='{"name": "test", "count": 42}'))
+    ]
 
-    def mock_completion(**kwargs):
-        call_count[0] += 1
-        if call_count[0] == 1:
-            # First call with response_format=schema raises NotImplementedError
-            raise NotImplementedError("Structured output not supported")
-        else:
-            # Second call with JSON mode returns JSON string
-            mock_response = mocker.Mock()
-            mock_response.choices = [
-                mocker.Mock(message=mocker.Mock(content='{"name": "test", "count": 42}'))
-            ]
-            return mock_response
-
-    mocker.patch("litellm.completion", side_effect=mock_completion)
+    mock_completion = mocker.patch("litellm.completion", return_value=mock_response)
 
     provider = LiteLLMProvider(model_name="gpt-4o", api_key="test-key")
     result = provider.generate_structured("Generate data", schema=TestSchema)
@@ -134,6 +122,10 @@ def test_litellm_provider_generate_structured(mocker):
     assert isinstance(result, TestSchema)
     assert result.name == "test"
     assert result.count == 42
+
+    # Verify JSON mode was used
+    call_kwargs = mock_completion.call_args[1]
+    assert call_kwargs["response_format"] == {"type": "json_object"}
 
 
 def test_create_llm_provider_litellm():
