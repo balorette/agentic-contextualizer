@@ -1,9 +1,12 @@
 """Scoped context agent factory."""
 
+import logging
 from pathlib import Path
 from typing import Optional
 from langchain.agents import create_agent
 from langchain_core.tools import tool
+
+logger = logging.getLogger(__name__)
 
 from ..tools import (
     FileBackend,
@@ -200,6 +203,12 @@ def create_scoped_agent(
             - error: Error message if generation failed
         """
         try:
+            if not relevant_file_paths:
+                return {
+                    "output_path": None,
+                    "error": "relevant_file_paths must not be empty.",
+                }
+
             # Read file contents via backend
             relevant_files = {}
             for file_path in relevant_file_paths:
@@ -207,18 +216,26 @@ def create_scoped_agent(
                 if content is not None:
                     relevant_files[file_path] = content
 
+            if not relevant_files:
+                return {
+                    "output_path": None,
+                    "error": f"Could not read any of the {len(relevant_file_paths)} provided file paths.",
+                }
+
             # Convert code reference dicts to CodeReference objects
             refs = None
             if code_references:
-                refs = [
-                    CodeReference(
-                        path=ref["path"],
-                        line_start=ref["line_start"],
-                        line_end=ref.get("line_end"),
-                        description=ref["description"],
-                    )
-                    for ref in code_references
-                ]
+                refs = []
+                for ref in code_references:
+                    try:
+                        refs.append(CodeReference(
+                            path=ref["path"],
+                            line_start=ref["line_start"],
+                            line_end=ref.get("line_end"),
+                            description=ref.get("description", ""),
+                        ))
+                    except (KeyError, TypeError, ValueError):
+                        continue  # Skip malformed references
 
             output_path = generator.generate(
                 repo_name=repo_path.name,
@@ -234,6 +251,7 @@ def create_scoped_agent(
                 "error": None,
             }
         except Exception as e:
+            logger.exception("generate_scoped_context failed")
             return {
                 "output_path": None,
                 "error": str(e),

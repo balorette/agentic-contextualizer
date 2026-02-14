@@ -348,3 +348,85 @@ class TestGenerateScopedContextTool:
         relevant_files = gen_call_kwargs["relevant_files"]
         assert "src/auth.py" in relevant_files
         assert "def login" in relevant_files["src/auth.py"]
+
+    def test_generate_tool_rejects_empty_paths(
+        self,
+        sample_repo,
+        mock_generator,
+        mock_create_agent,
+        mock_init_chat_model,
+    ):
+        """Tool should return an error when given an empty paths list."""
+        from src.agents.scoper.agent import create_scoped_agent
+        from src.agents.config import Config
+
+        create_scoped_agent(sample_repo, config=Config(api_key="test"))
+
+        call_kwargs = mock_create_agent.call_args[1]
+        tools = call_kwargs["tools"]
+        gen_tool = next(t for t in tools if t.name == "generate_scoped_context")
+
+        result = gen_tool.invoke({
+            "question": "How does auth work?",
+            "relevant_file_paths": [],
+            "insights": "Some insights",
+        })
+
+        assert result["output_path"] is None
+        assert "empty" in result["error"].lower()
+        mock_generator.generate.assert_not_called()
+
+    def test_generate_tool_skips_nonexistent_files(
+        self,
+        sample_repo,
+        mock_generator,
+        mock_create_agent,
+        mock_init_chat_model,
+    ):
+        """Tool should skip files that don't exist and still generate."""
+        from src.agents.scoper.agent import create_scoped_agent
+        from src.agents.config import Config
+
+        create_scoped_agent(sample_repo, config=Config(api_key="test"))
+
+        call_kwargs = mock_create_agent.call_args[1]
+        tools = call_kwargs["tools"]
+        gen_tool = next(t for t in tools if t.name == "generate_scoped_context")
+
+        result = gen_tool.invoke({
+            "question": "How does auth work?",
+            "relevant_file_paths": ["src/auth.py", "nonexistent.py"],
+            "insights": "Auth uses password-based login",
+        })
+
+        mock_generator.generate.assert_called_once()
+        gen_call_kwargs = mock_generator.generate.call_args[1]
+        assert "nonexistent.py" not in gen_call_kwargs["relevant_files"]
+        assert "src/auth.py" in gen_call_kwargs["relevant_files"]
+
+    def test_generate_tool_returns_error_on_exception(
+        self,
+        sample_repo,
+        mock_generator,
+        mock_create_agent,
+        mock_init_chat_model,
+    ):
+        """Tool should catch exceptions and return error dict."""
+        from src.agents.scoper.agent import create_scoped_agent
+        from src.agents.config import Config
+
+        create_scoped_agent(sample_repo, config=Config(api_key="test"))
+
+        call_kwargs = mock_create_agent.call_args[1]
+        tools = call_kwargs["tools"]
+        gen_tool = next(t for t in tools if t.name == "generate_scoped_context")
+
+        mock_generator.generate.side_effect = RuntimeError("LLM failed")
+        result = gen_tool.invoke({
+            "question": "How does auth work?",
+            "relevant_file_paths": ["src/auth.py"],
+            "insights": "Some insights",
+        })
+
+        assert result["output_path"] is None
+        assert "LLM failed" in result["error"]
