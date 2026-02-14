@@ -12,6 +12,7 @@ from langchain_core.messages import trim_messages
 if TYPE_CHECKING:
     from ..llm.rate_limiting import TPMThrottle
     from ..llm.token_estimator import TokenEstimator
+    from ..middleware.budget import BudgetTracker
 
 logger = logging.getLogger(__name__)
 
@@ -34,12 +35,15 @@ class TokenBudgetMiddleware(AgentMiddleware):
         throttle: Optional["TPMThrottle"] = None,
         estimator: Optional["TokenEstimator"] = None,
         model_name: str = "unknown",
+        budget_tracker: Optional["BudgetTracker"] = None,
     ):
         self.max_input_tokens = max_input_tokens
         self.max_tool_output_chars = max_tool_output_chars
         self.throttle = throttle
         self.estimator = estimator
         self.model_name = model_name
+        self.budget_tracker = budget_tracker
+        self._last_estimate: int = 0
 
     def before_model(self, state, runtime) -> dict[str, Any] | None:
         """Trim conversation history, then throttle if configured."""
@@ -72,9 +76,56 @@ class TokenBudgetMiddleware(AgentMiddleware):
                 content = m.get("content", "") if isinstance(m, dict) else getattr(m, "content", str(m))
                 msg_dicts.append({"role": role, "content": content})
             estimated = self.estimator.estimate(msg_dicts, self.model_name)
+            self._last_estimate = estimated
             self.throttle.wait_if_needed(estimated)
 
         return result
+
+    def after_model(self, state, runtime) -> dict[str, Any] | None:
+        """Record actual token usage after the model call."""
+        if not self.throttle:
+            return None
+
+        messages = state.get("messages", []) if isinstance(state, dict) else getattr(state, "messages", [])
+        if not messages:
+            return None
+
+        # Find the last AIMessage
+        last_msg = messages[-1]
+        is_ai = (
+            (isinstance(last_msg, dict) and last_msg.get("role") == "assistant")
+            or getattr(last_msg, "type", None) == "ai"
+        )
+        if not is_ai:
+            return None
+
+        # Extract usage_metadata (LangChain standard)
+        usage = getattr(last_msg, "usage_metadata", None)
+        if usage:
+            total = usage.get("total_tokens", 0)
+            input_tokens = usage.get("input_tokens", 0)
+            output_tokens = usage.get("output_tokens", 0)
+        else:
+            logger.warning(
+                "No usage_metadata on AIMessage — falling back to estimate (%d tokens)",
+                self._last_estimate,
+            )
+            total = self._last_estimate
+            input_tokens = self._last_estimate
+            output_tokens = 0
+
+        if total > 0:
+            self.throttle.record_usage(total)
+
+        if self.budget_tracker:
+            self.budget_tracker.add_usage(
+                prompt_tokens=input_tokens,
+                completion_tokens=output_tokens,
+                operation="agent_model_call",
+            )
+            self.budget_tracker.check_budget()
+
+        return None
 
     def wrap_tool_call(self, request, handler):
         """Truncate tool outputs that exceed the character limit."""
