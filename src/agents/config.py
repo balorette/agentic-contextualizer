@@ -44,7 +44,7 @@ class Config(BaseModel):
     # Token Budget
     max_output_tokens: Optional[int] = Field(default=16384)
     max_input_tokens: Optional[int] = Field(default=128_000)
-    max_tool_output_chars: int = Field(default=12000)
+    max_tool_output_chars: int = Field(default=6000)
     max_scan_files: int = Field(default=200)
 
     # Scanner Settings
@@ -118,7 +118,7 @@ class Config(BaseModel):
             "retry_initial_wait": _parse_float(os.getenv("RETRY_INITIAL_WAIT"), 2.0),
             "max_output_tokens": _parse_int(os.getenv("LLM_MAX_OUTPUT_TOKENS"), 16384),
             "max_input_tokens": _parse_int(os.getenv("LLM_MAX_INPUT_TOKENS"), 128_000) if os.getenv("LLM_MAX_INPUT_TOKENS") else 128_000,
-            "max_tool_output_chars": _parse_int(os.getenv("MAX_TOOL_OUTPUT_CHARS"), 12000),
+            "max_tool_output_chars": _parse_int(os.getenv("MAX_TOOL_OUTPUT_CHARS"), 6000),
             "max_scan_files": _parse_int(os.getenv("MAX_SCAN_FILES"), 200),
             "max_file_size": _parse_int(os.getenv("MAX_FILE_SIZE"), 1_000_000),
             "ignored_dirs": ignored_dirs,

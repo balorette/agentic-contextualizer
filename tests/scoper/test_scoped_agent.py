@@ -170,6 +170,37 @@ class TestCreateScopedAgent:
         calls = mock_config.from_env.call_count
         assert calls == 1, f"Config.from_env() called {calls} times, expected 1"
 
+    def test_passes_tight_tool_limits(
+        self,
+        sample_repo,
+        mock_config,
+        mock_llm,
+        mock_create_agent,
+        mock_init_chat_model,
+    ):
+        """Test that agent factory passes tighter limits to tool factories."""
+        from src.agents.scoper.agent import create_scoped_agent
+
+        with patch("src.agents.scoper.agent.create_file_tools") as mock_file_tools, \
+             patch("src.agents.scoper.agent.create_search_tools") as mock_search_tools, \
+             patch("src.agents.scoper.agent.create_analysis_tools") as mock_analysis_tools:
+            mock_file_tools.return_value = []
+            mock_search_tools.return_value = []
+            mock_analysis_tools.return_value = []
+
+            create_scoped_agent(sample_repo)
+
+            # File tools should get tighter limits
+            mock_file_tools.assert_called_once()
+            ft_kwargs = mock_file_tools.call_args
+            assert ft_kwargs[1].get("max_chars") == 8000
+
+            # Search tools should get tighter limits
+            mock_search_tools.assert_called_once()
+            st_kwargs = mock_search_tools.call_args
+            assert st_kwargs[1].get("max_grep_results") == 15
+            assert st_kwargs[1].get("context_lines") == 1
+
 
 class TestCreateScopedAgentWithBudget:
     """Tests for create_scoped_agent_with_budget factory."""

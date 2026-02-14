@@ -49,6 +49,12 @@ def test_base_url_auto_switches_to_litellm(monkeypatch):
     assert config.api_base_url == "https://my-gateway.example.com"
 
 
+def test_max_tool_output_chars_default_is_6000():
+    """max_tool_output_chars should default to 6000."""
+    config = Config()
+    assert config.max_tool_output_chars == 6000
+
+
 def test_config_cli_overrides(monkeypatch):
     """Test CLI overrides take precedence over env vars."""
     monkeypatch.setenv("LLM_PROVIDER", "anthropic")

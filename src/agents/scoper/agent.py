@@ -166,9 +166,12 @@ def create_scoped_agent(
     throttle = TPMThrottle(config.max_tpm, config.tpm_safety_factor)
 
     # Create file, analysis, and code search tools bound to backend
-    file_tools = create_file_tools(backend)
+    # Use tighter limits for agent mode to reduce token consumption
+    file_tools = create_file_tools(backend, max_chars=8000, max_search_results=15)
     analysis_tools = create_analysis_tools(backend)
-    code_search_tools = create_search_tools(backend)
+    code_search_tools = create_search_tools(
+        backend, max_grep_results=15, max_def_results=15, context_lines=1
+    )
 
     # Create the generation tool (needs LLM and output config)
     # Reuse the config from above to ensure consistent credentials
