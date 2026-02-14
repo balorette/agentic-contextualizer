@@ -289,6 +289,14 @@ class TestScopedAgentSystemPrompt:
         assert "Budget" in SCOPED_AGENT_SYSTEM_PROMPT
         assert "10-20" in SCOPED_AGENT_SYSTEM_PROMPT  # file read budget
 
+    def test_prompt_includes_token_economy(self):
+        """Test that system prompt includes token economy guidance."""
+        from src.agents.scoper.agent import SCOPED_AGENT_SYSTEM_PROMPT
+
+        assert "Token Economy" in SCOPED_AGENT_SYSTEM_PROMPT or "token" in SCOPED_AGENT_SYSTEM_PROMPT.lower()
+        # Should mention keeping results small
+        assert "max_results" in SCOPED_AGENT_SYSTEM_PROMPT
+
 
 class TestGenerateScopedContextTool:
     """Tests for the generate_scoped_context tool signature and behavior."""

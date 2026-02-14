@@ -85,6 +85,17 @@ The final scoped context should answer the user's question with:
 - Usage examples if available
 - A Code References section listing important file:line locations
 
+## Token Economy
+
+Every tool result is added to the conversation and sent with each subsequent API call. Large results compound quickly.
+
+- **grep_in_files**: Start with `max_results=5`. Only increase if you need more matches.
+- **search_for_files**: Start with `max_results=5`. Narrow with more specific keywords rather than increasing results.
+- **find_code_definitions**: Start with `max_results=5`.
+- **read_file**: Large files are automatically truncated. If you only need a section, note the relevant lines and move on.
+- Prefer targeted grep searches over reading entire files.
+- If a tool returns too many results, refine the query instead of reading them all.
+
 ## Important Notes
 
 - Don't read files you've already read
