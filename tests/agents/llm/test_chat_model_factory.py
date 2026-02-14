@@ -146,3 +146,19 @@ class TestBuildTokenMiddleware:
 
         # Middleware should be created without error
         assert mw is not None
+
+    def test_build_token_middleware_strips_provider_prefix(self):
+        """Token estimator should receive model name without provider prefix.
+
+        litellm.token_counter() fails on 'anthropic:claude-...' format,
+        falling back to inaccurate char-based estimation.
+        """
+        from src.agents.llm.chat_model_factory import build_token_middleware
+        from src.agents.config import Config
+
+        config = Config()
+        mw = build_token_middleware(config, "anthropic:claude-sonnet-4-5-20250929")
+
+        # model_name stored on the middleware should NOT have the prefix
+        assert mw.model_name == "claude-sonnet-4-5-20250929"
+        assert ":" not in mw.model_name

@@ -13,7 +13,7 @@ from langchain.chat_models import init_chat_model
 from langchain_core.language_models import BaseChatModel
 
 from ..config import Config
-from .provider import _resolve_api_key_for_model
+from .provider import _resolve_api_key_for_model, _strip_provider_prefix
 
 if TYPE_CHECKING:
     from ..middleware.token_budget import TokenBudgetMiddleware
@@ -185,5 +185,5 @@ def build_token_middleware(
         max_tool_output_chars=config.max_tool_output_chars,
         throttle=throttle,
         estimator=estimator,
-        model_name=model_name,
+        model_name=_strip_provider_prefix(model_name),
     )
