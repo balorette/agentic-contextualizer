@@ -136,11 +136,10 @@ def create_contextualizer_agent_with_budget(
     use_litellm: bool = False,
     config: Optional["Config"] = None,
 ):
-    """Create agent with budget tracking for token/cost monitoring.
+    """Create agent with budget tracking wired into middleware.
 
-    This creates a standard agent and returns it along with a BudgetTracker
-    instance. The caller is responsible for integrating budget tracking
-    into their workflow (e.g., in the CLI).
+    The BudgetTracker is automatically fed actual token usage via the
+    middleware's after_model hook — no manual extraction needed.
 
     Args:
         max_tokens: Maximum tokens allowed per session (default: 50k)
@@ -148,49 +147,55 @@ def create_contextualizer_agent_with_budget(
         model_name: LLM model identifier
         checkpointer: Optional checkpointer for state persistence
         debug: Enable verbose logging
+        base_url: Optional custom API endpoint URL
+        api_key: Optional API key
+        use_litellm: Force use of ChatLiteLLM
+        config: Optional Config override
 
     Returns:
         Tuple of (agent, budget_tracker)
-
-    Example:
-        ```python
-        from src.agents.factory import create_contextualizer_agent_with_budget
-        from src.agents.middleware import extract_token_usage_from_response
-
-        agent, tracker = create_contextualizer_agent_with_budget(max_tokens=30000)
-
-        # Invoke agent
-        result = agent.invoke({"messages": [...]}, config=config)
-
-        # Track usage from response
-        for msg in result.get("messages", []):
-            usage = extract_token_usage_from_response(msg)
-            if usage:
-                tracker.add_usage(
-                    usage.prompt_tokens,
-                    usage.completion_tokens,
-                    "agent_call"
-                )
-
-        # Check budget
-        tracker.print_summary()
-        if tracker.is_over_budget():
-            print("Warning: Budget exceeded!")
-        ```
     """
+    from .config import Config
     from .middleware import BudgetTracker
+    from .llm.chat_model_factory import build_chat_model, build_token_middleware
 
-    agent = create_contextualizer_agent(
+    if config is None:
+        config = Config.from_env()
+
+    if not use_litellm and config.llm_provider == "litellm":
+        use_litellm = True
+
+    model = build_chat_model(
+        config=config,
         model_name=model_name,
-        checkpointer=checkpointer,
-        debug=debug,
         base_url=base_url,
         api_key=api_key,
         use_litellm=use_litellm,
-        config=config,
+        debug=debug,
     )
 
     tracker = BudgetTracker(max_tokens=max_tokens, max_cost_usd=max_cost_usd)
+
+    budget_mw = build_token_middleware(config, model_name, budget_tracker=tracker)
+
+    tools = [
+        scan_structure,
+        extract_metadata,
+        analyze_code,
+        generate_context,
+        refine_context,
+        list_key_files,
+        read_file_snippet,
+    ]
+
+    agent = create_agent(
+        model=model,
+        tools=tools,
+        system_prompt=AGENT_SYSTEM_PROMPT,
+        middleware=[budget_mw],
+        checkpointer=checkpointer,
+        debug=debug,
+    )
 
     return agent, tracker
 
