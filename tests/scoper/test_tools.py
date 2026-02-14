@@ -243,6 +243,50 @@ class TestCreateFileTools:
 
         assert result["content"] == "test content"
 
+    def test_custom_max_chars(self, tmp_path):
+        """Test that create_file_tools respects custom max_chars."""
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        (repo / "big.py").write_text("x" * 500)
+
+        backend = LocalFileBackend(repo)
+        tools = create_file_tools(backend, max_chars=100)
+
+        read_tool = next(t for t in tools if t.name == "read_file")
+        result = read_tool.invoke({"file_path": "big.py"})
+
+        assert result["truncated"] is True
+        assert result["char_count"] == 100
+
+    def test_custom_max_search_results(self, tmp_path):
+        """Test that create_file_tools respects custom max_search_results."""
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        for i in range(10):
+            (repo / f"match_{i}.py").write_text("keyword content")
+
+        backend = LocalFileBackend(repo)
+        tools = create_file_tools(backend, max_search_results=3)
+
+        search_tool = next(t for t in tools if t.name == "search_for_files")
+        result = search_tool.invoke({"keywords": ["match"]})
+
+        assert result["total_found"] <= 3
+
+    def test_default_limits_unchanged(self, tmp_path):
+        """Test that default limits are preserved when no overrides given."""
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        (repo / "test.py").write_text("content")
+
+        backend = LocalFileBackend(repo)
+        tools = create_file_tools(backend)
+
+        read_tool = next(t for t in tools if t.name == "read_file")
+        # Default max_chars should still be 13_500
+        result = read_tool.invoke({"file_path": "test.py"})
+        assert result["truncated"] is False  # 7 chars < 13500
+
 
 class TestCreateAnalysisTools:
     """Tests for create_analysis_tools factory."""

@@ -88,6 +88,7 @@ from .repository_tools import (
     analyze_code,
     generate_context,
     refine_context,
+    set_allowed_repo_root,
 )
 
 # Exploration tools (kept for backward compatibility)
@@ -152,6 +153,7 @@ __all__ = [
     "analyze_code",
     "generate_context",
     "refine_context",
+    "set_allowed_repo_root",
     # Exploration tools (backward compatibility)
     "read_file_snippet",
 ]

@@ -71,12 +71,12 @@ def test_get_forecast():
 
         return repo
 
-    @patch("src.agents.main.AnthropicProvider")
-    def test_scope_pipeline_end_to_end(self, mock_provider_class, runner, sample_repo, tmp_path):
+    @patch("src.agents.main.create_llm_provider")
+    def test_scope_pipeline_end_to_end(self, mock_factory, runner, sample_repo, tmp_path):
         """Test full pipeline scope execution."""
         # Mock LLM responses
         mock_provider = Mock()
-        mock_provider_class.return_value = mock_provider
+        mock_factory.return_value = mock_provider
 
         # Mock exploration response
         mock_provider.generate_structured.return_value = Mock(

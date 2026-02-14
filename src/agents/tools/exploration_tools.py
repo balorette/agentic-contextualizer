@@ -5,55 +5,35 @@ from typing import Any
 from langchain_core.tools import tool
 
 from .file import KEY_FILE_PATTERNS
+from .repository_tools import _allowed_repo_root
 
 
 @tool
-def list_key_files(file_tree: dict[str, Any]) -> dict[str, list[str]]:
-    """List important files from a file tree structure.
-
-    Identifies and categorizes key files like configuration files, entry points,
-    and documentation from a repository file tree. Useful for quick navigation
-    and understanding project structure.
+def list_key_files(file_list: list[str]) -> dict[str, list[str]]:
+    """Categorize key files (configs, entry_points, docs) from a file list.
 
     Args:
-        file_tree: File tree dictionary from scan_structure tool
+        file_list: List of repo-relative file paths from scan_structure tool
 
     Returns:
-        Dictionary with categorized lists:
-        - configs: Configuration files
-        - entry_points: Main entry point files
-        - docs: Documentation files
-        - all_key_files: Combined list of all key files found
+        Dictionary with configs, entry_points, docs, and all_key_files lists.
     """
-    found_files = {
+    found_files: dict[str, list[str]] = {
         "configs": [],
         "entry_points": [],
         "docs": [],
     }
 
-    def scan_tree(node: dict[str, Any], current_path: str = ""):
-        """Recursively scan tree for key files."""
-        if node.get("type") == "file":
-            file_name = node.get("name", "")
-            file_path = node.get("path", current_path)
+    for file_path in file_list:
+        file_name = file_path.rsplit("/", 1)[-1] if "/" in file_path else file_path
 
-            # Check each category
-            for category, patterns in KEY_FILE_PATTERNS.items():
-                for pattern in patterns:
-                    if file_name == pattern or file_path.endswith(pattern):
-                        found_files[category].append(file_path)
-                        break
+        for category, patterns in KEY_FILE_PATTERNS.items():
+            for pattern in patterns:
+                if file_name == pattern or file_path.endswith(pattern):
+                    found_files[category].append(file_path)
+                    break
 
-        elif node.get("type") == "directory":
-            for child in node.get("children", []):
-                child_path = f"{current_path}/{child.get('name', '')}" if current_path else child.get("name", "")
-                scan_tree(child, child_path)
-
-    # Scan the tree
-    scan_tree(file_tree)
-
-    # Create combined list
-    all_key_files = []
+    all_key_files: list[str] = []
     for category_files in found_files.values():
         all_key_files.extend(category_files)
 
@@ -65,28 +45,26 @@ def list_key_files(file_tree: dict[str, Any]) -> dict[str, list[str]]:
 
 @tool
 def read_file_snippet(file_path: str, start_line: int = 0, num_lines: int = 50) -> dict[str, Any]:
-    """Read a snippet from a specific file.
-
-    Reads a portion of a file's content, useful for examining specific sections
-    without loading entire large files. Supports line-based reading with
-    start position and length control.
+    """Read lines from a file. Returns content, line range, and total_lines.
 
     Args:
         file_path: Absolute path to the file to read
-        start_line: Line number to start reading from (0-indexed, default: 0)
+        start_line: Line number to start from (0-indexed, default: 0)
         num_lines: Number of lines to read (default: 50, max: 500)
 
     Returns:
-        Dictionary containing:
-        - content: The file content snippet
-        - start_line: Starting line number (0-indexed)
-        - end_line: Ending line number (0-indexed)
-        - total_lines: Total number of lines in the file
-        - file_path: Path to the file that was read
-        - error: Error message if read failed
+        Dictionary with content, start_line, end_line, total_lines, file_path, or error.
     """
     try:
-        path = Path(file_path)
+        path = Path(file_path).resolve()
+
+        # Path traversal protection: ensure file is within allowed repo root
+        allowed_root = _allowed_repo_root.get(None)
+        if allowed_root is not None:
+            try:
+                path.relative_to(allowed_root)
+            except ValueError:
+                return {"error": f"Access denied: path is outside the allowed repository"}
 
         # Validate file exists
         if not path.exists():

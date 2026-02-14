@@ -4,110 +4,69 @@ import pytest
 from src.agents.tools.exploration_tools import list_key_files, read_file_snippet
 
 
+class TestListKeyFilesFlat:
+    """Tests for list_key_files tool with flat file list input."""
+
+    def test_list_key_files_accepts_flat_list(self):
+        """list_key_files should work with a flat file list from scan_structure."""
+        flat_list = [
+            "README.md",
+            "pyproject.toml",
+            "src/main.py",
+            "src/__init__.py",
+            "docs/guide.md",
+            "Dockerfile",
+        ]
+        result = list_key_files.invoke({"file_list": flat_list})
+        assert "README.md" in result["docs"]
+        assert "pyproject.toml" in result["configs"]
+
+
 class TestListKeyFiles:
     """Tests for list_key_files tool."""
 
     def test_list_key_files_finds_configs(self):
         """Test that configuration files are identified."""
-        # Setup
-        file_tree = {
-            "name": "root",
-            "type": "directory",
-            "children": [
-                {"name": "package.json", "type": "file", "path": "package.json"},
-                {"name": "pyproject.toml", "type": "file", "path": "pyproject.toml"},
-                {"name": "src", "type": "directory", "children": []},
-            ],
-        }
+        file_list = ["package.json", "pyproject.toml", "src/app.py"]
 
-        # Execute
-        result = list_key_files.invoke({"file_tree": file_tree})
+        result = list_key_files.invoke({"file_list": file_list})
 
-        # Assert
         assert "package.json" in result["configs"]
         assert "pyproject.toml" in result["configs"]
         assert len(result["all_key_files"]) >= 2
 
     def test_list_key_files_finds_entry_points(self):
         """Test that entry point files are identified."""
-        # Setup
-        file_tree = {
-            "name": "root",
-            "type": "directory",
-            "children": [
-                {"name": "main.py", "type": "file", "path": "main.py"},
-                {"name": "index.js", "type": "file", "path": "index.js"},
-            ],
-        }
+        file_list = ["main.py", "index.js"]
 
-        # Execute
-        result = list_key_files.invoke({"file_tree": file_tree})
+        result = list_key_files.invoke({"file_list": file_list})
 
-        # Assert
         assert "main.py" in result["entry_points"]
         assert "index.js" in result["entry_points"]
 
     def test_list_key_files_finds_docs(self):
         """Test that documentation files are identified."""
-        # Setup
-        file_tree = {
-            "name": "root",
-            "type": "directory",
-            "children": [
-                {"name": "README.md", "type": "file", "path": "README.md"},
-                {"name": "LICENSE", "type": "file", "path": "LICENSE"},
-                {"name": "CLAUDE.md", "type": "file", "path": "CLAUDE.md"},
-            ],
-        }
+        file_list = ["README.md", "LICENSE", "CLAUDE.md"]
 
-        # Execute
-        result = list_key_files.invoke({"file_tree": file_tree})
+        result = list_key_files.invoke({"file_list": file_list})
 
-        # Assert
         assert "README.md" in result["docs"]
         assert "LICENSE" in result["docs"]
         assert "CLAUDE.md" in result["docs"]
 
     def test_list_key_files_handles_nested_structure(self):
         """Test that key files in subdirectories are found."""
-        # Setup
-        file_tree = {
-            "name": "root",
-            "type": "directory",
-            "children": [
-                {
-                    "name": "src",
-                    "type": "directory",
-                    "children": [
-                        {"name": "main.py", "type": "file", "path": "src/main.py"},
-                    ],
-                },
-                {
-                    "name": "docs",
-                    "type": "directory",
-                    "children": [
-                        {"name": "index.md", "type": "file", "path": "docs/index.md"},
-                    ],
-                },
-            ],
-        }
+        file_list = ["src/main.py", "docs/index.md"]
 
-        # Execute
-        result = list_key_files.invoke({"file_tree": file_tree})
+        result = list_key_files.invoke({"file_list": file_list})
 
-        # Assert
         assert "src/main.py" in result["entry_points"]
         assert "docs/index.md" in result["docs"]
 
-    def test_list_key_files_empty_tree(self):
-        """Test handling of empty file tree."""
-        # Setup
-        file_tree = {"name": "root", "type": "directory", "children": []}
+    def test_list_key_files_empty_list(self):
+        """Test handling of empty file list."""
+        result = list_key_files.invoke({"file_list": []})
 
-        # Execute
-        result = list_key_files.invoke({"file_tree": file_tree})
-
-        # Assert
         assert len(result["all_key_files"]) == 0
         assert len(result["configs"]) == 0
         assert len(result["entry_points"]) == 0

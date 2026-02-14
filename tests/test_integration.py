@@ -14,20 +14,22 @@ class MockLLMProvider(LLMProvider):
     def __init__(self):
         self.call_count = 0
 
+    def generate_structured(self, prompt: str, system: str | None = None, schema=None):
+        """Return mock structured response for code analysis."""
+        from agents.analyzer.code_analyzer import CodeAnalysisOutput
+        return CodeAnalysisOutput(
+            architecture_patterns=["Linear Pipeline"],
+            tech_stack=["Python", "LangChain"],
+            coding_conventions={"style": "PEP8"},
+            insights="Well-structured tool",
+        )
+
     def generate(self, prompt: str, system: str | None = None) -> LLMResponse:
         """Return appropriate mock response based on call."""
         self.call_count += 1
 
-        if self.call_count == 1:  # Code analysis
-            response = {
-                "architecture_patterns": ["Linear Pipeline"],
-                "tech_stack": ["Python", "LangChain"],
-                "coding_conventions": {"style": "PEP8"},
-                "insights": "Well-structured tool",
-            }
-            content = json.dumps(response)
-        else:  # Context generation
-            content = """# Repository Context: Test Repo
+        # Context generation (code analysis now uses generate_structured)
+        content = """# Repository Context: Test Repo
 
 ## Architecture Overview
 Linear pipeline architecture.

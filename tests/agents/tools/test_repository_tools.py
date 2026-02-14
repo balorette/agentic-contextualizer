@@ -1,6 +1,7 @@
 """Tests for repository analysis tools."""
 
 import pytest
+from contextvars import ContextVar
 from unittest.mock import Mock, patch
 from src.agents.tools.repository_tools import (
     scan_structure,
@@ -8,22 +9,45 @@ from src.agents.tools.repository_tools import (
     analyze_code,
     generate_context,
     refine_context,
+    _flatten_tree,
 )
+
+
+class TestFlattenTree:
+    """Tests for _flatten_tree helper."""
+
+    def test_flatten_tree_returns_relative_paths(self):
+        """_flatten_tree should return repo-relative paths without root dir name."""
+        tree = {
+            "name": "my-repo",
+            "type": "directory",
+            "children": [
+                {"name": "README.md", "type": "file"},
+                {
+                    "name": "src",
+                    "type": "directory",
+                    "children": [
+                        {"name": "main.py", "type": "file"},
+                    ],
+                },
+            ],
+        }
+        result = _flatten_tree(tree)
+        assert "README.md" in result
+        assert "src/main.py" in result
+        # Must NOT have repo name prefix
+        assert not any(p.startswith("my-repo/") for p in result)
 
 
 class TestScanStructure:
     """Tests for scan_structure tool."""
 
-    @patch("src.agents.tools.repository_tools._scanner")
-    def test_scan_structure_success(self, mock_scanner, tmp_path):
+    def test_scan_structure_success(self, tmp_path):
         """Test successful repository scan."""
         # Setup
-        mock_scanner.scan.return_value = {
-            "tree": {"name": "root", "type": "directory", "children": []},
-            "all_files": ["file1.py", "file2.py", "file3.py"],
-            "total_files": 3,
-            "total_dirs": 1,
-        }
+        (tmp_path / "file1.py").write_text("# file1")
+        (tmp_path / "file2.py").write_text("# file2")
+        (tmp_path / "file3.py").write_text("# file3")
 
         # Execute
         result = scan_structure.invoke({"repo_path": str(tmp_path)})
@@ -31,41 +55,30 @@ class TestScanStructure:
         # Assert
         assert "error" not in result
         assert result["total_files"] == 3
-        assert result["total_dirs"] == 1
-        assert len(result["all_files"]) == 3
-        mock_scanner.scan.assert_called_once()
+        assert "file_list" in result
+        assert len(result["file_list"]) == 3
 
-    @patch("src.agents.tools.repository_tools._scanner")
-    def test_scan_structure_limits_files(self, mock_scanner, tmp_path):
-        """Test that file list is limited to 100 for efficiency."""
-        # Setup - return more than 100 files
-        many_files = [f"file{i}.py" for i in range(150)]
-        mock_scanner.scan.return_value = {
-            "tree": {"name": "root", "type": "directory", "children": []},
-            "all_files": many_files,
-            "total_files": 150,
-            "total_dirs": 1,
-        }
+    def test_scan_structure_returns_flat_list(self, tmp_path):
+        """Test that scan returns a flat file list (not nested tree)."""
+        (tmp_path / "main.py").write_text("# main")
+        sub = tmp_path / "src"
+        sub.mkdir()
+        (sub / "lib.py").write_text("# lib")
 
-        # Execute
         result = scan_structure.invoke({"repo_path": str(tmp_path)})
 
-        # Assert - should only return first 100
-        assert len(result["all_files"]) == 100
-        assert result["total_files"] == 150  # But count should be accurate
+        # Should be a flat list of path strings
+        assert isinstance(result["file_list"], list)
+        assert all(isinstance(f, str) for f in result["file_list"])
 
-    @patch("src.agents.tools.repository_tools._scanner")
-    def test_scan_structure_handles_error(self, mock_scanner, tmp_path):
+    def test_scan_structure_handles_error(self, tmp_path):
         """Test error handling when scan fails."""
-        # Setup
-        mock_scanner.scan.side_effect = Exception("Scan failed")
-
-        # Execute
-        result = scan_structure.invoke({"repo_path": str(tmp_path)})
+        # Execute with non-existent path
+        result = scan_structure.invoke({"repo_path": str(tmp_path / "nonexistent")})
 
         # Assert
         assert "error" in result
-        assert "Failed to scan repository" in result["error"]
+        assert "Invalid or disallowed" in result["error"] or "Failed to scan" in result["error"]
 
     def test_scan_structure_idempotent(self, tmp_path):
         """Test that calling scan_structure multiple times returns same result."""
@@ -84,32 +97,28 @@ class TestScanStructure:
 class TestExtractMetadata:
     """Tests for extract_metadata tool."""
 
-    @patch("src.agents.tools.repository_tools._metadata_extractor")
-    def test_extract_metadata_success(self, mock_extractor, tmp_path):
+    @patch("src.agents.tools.repository_tools.MetadataExtractor")
+    def test_extract_metadata_success(self, mock_extractor_class, tmp_path):
         """Test successful metadata extraction."""
-        # Setup
         mock_metadata = Mock()
         mock_metadata.project_type = "python"
         mock_metadata.dependencies = {"requests": "2.0.0", "pytest": "7.0.0"}
         mock_metadata.entry_points = ["main.py"]
         mock_metadata.key_files = ["pyproject.toml", "README.md"]
 
-        mock_extractor.extract.return_value = mock_metadata
+        mock_extractor_class.return_value.extract.return_value = mock_metadata
 
-        # Execute
         result = extract_metadata.invoke({"repo_path": str(tmp_path)})
 
-        # Assert
         assert "error" not in result
         assert result["project_type"] == "python"
         assert "requests" in result["dependencies"]
         assert "main.py" in result["entry_points"]
         assert "pyproject.toml" in result["key_files"]
 
-    @patch("src.agents.tools.repository_tools._metadata_extractor")
-    def test_extract_metadata_limits_dependencies(self, mock_extractor, tmp_path):
+    @patch("src.agents.tools.repository_tools.MetadataExtractor")
+    def test_extract_metadata_limits_dependencies(self, mock_extractor_class, tmp_path):
         """Test that dependencies are limited to 20."""
-        # Setup - return more than 20 dependencies
         many_deps = {f"dep{i}": "1.0.0" for i in range(30)}
         mock_metadata = Mock()
         mock_metadata.project_type = "python"
@@ -117,24 +126,19 @@ class TestExtractMetadata:
         mock_metadata.entry_points = []
         mock_metadata.key_files = []
 
-        mock_extractor.extract.return_value = mock_metadata
+        mock_extractor_class.return_value.extract.return_value = mock_metadata
 
-        # Execute
         result = extract_metadata.invoke({"repo_path": str(tmp_path)})
 
-        # Assert - should only return first 20
         assert len(result["dependencies"]) == 20
 
-    @patch("src.agents.tools.repository_tools._metadata_extractor")
-    def test_extract_metadata_handles_error(self, mock_extractor, tmp_path):
+    @patch("src.agents.tools.repository_tools.MetadataExtractor")
+    def test_extract_metadata_handles_error(self, mock_extractor_class, tmp_path):
         """Test error handling when extraction fails."""
-        # Setup
-        mock_extractor.extract.side_effect = Exception("Extraction failed")
+        mock_extractor_class.return_value.extract.side_effect = Exception("Extraction failed")
 
-        # Execute
         result = extract_metadata.invoke({"repo_path": str(tmp_path)})
 
-        # Assert
         assert "error" in result
         assert "Failed to extract metadata" in result["error"]
 
@@ -162,7 +166,7 @@ class TestAnalyzeCode:
             "repo_path": str(tmp_path),
             "user_summary": "A test project",
             "metadata_dict": {"project_type": "python", "dependencies": {}, "entry_points": [], "key_files": []},
-            "file_tree": {"name": "root", "type": "directory", "children": []},
+            "file_list": [],
         })
 
         # Assert
@@ -186,7 +190,7 @@ class TestAnalyzeCode:
             "repo_path": str(tmp_path),
             "user_summary": "A test project",
             "metadata_dict": {"project_type": "python", "dependencies": {}, "entry_points": [], "key_files": []},
-            "file_tree": {"name": "root", "type": "directory", "children": []},
+            "file_list": [],
         })
 
         # Assert
@@ -331,3 +335,93 @@ class TestRefineContext:
         # Assert
         assert "error" in result
         assert "Failed to refine context" in result["error"]
+
+
+class TestGetConfig:
+    """Tests for _get_config lazy fallback."""
+
+    def test_get_config_returns_context_var_if_set(self):
+        """_get_config should prefer the ContextVar value."""
+        from src.agents.tools.repository_tools import _get_config, set_tool_config
+        from src.agents.config import Config
+
+        config = Config(model_name="test-model")
+        set_tool_config(config)
+
+        result = _get_config()
+        assert result.model_name == "test-model"
+
+    @patch("src.agents.tools.repository_tools.Config.from_env")
+    def test_get_config_lazy_creates_default(self, mock_from_env):
+        """_get_config should lazily create fallback on first call when ContextVar unset."""
+        from src.agents.tools import repository_tools
+        from src.agents.tools.repository_tools import _get_config
+        from src.agents.config import Config
+
+        # Reset module-level state
+        old_default = repository_tools._default_config
+        old_cv = repository_tools._tool_config
+        repository_tools._default_config = None
+        repository_tools._tool_config = ContextVar('tool_config', default=None)
+
+        mock_from_env.return_value = Config()
+
+        try:
+            result = _get_config()
+            assert result is not None
+            assert repository_tools._default_config is not None
+            mock_from_env.assert_called_once()
+        finally:
+            # Restore
+            repository_tools._default_config = old_default
+            repository_tools._tool_config = old_cv
+
+
+class TestGetLlmProvider:
+    """Tests for _get_llm_provider caching."""
+
+    @patch("src.agents.tools.repository_tools.create_llm_provider")
+    def test_get_llm_provider_returns_same_instance(self, mock_create):
+        """Consecutive calls should return the same cached provider."""
+        from src.agents.tools import repository_tools
+        from src.agents.tools.repository_tools import _get_llm_provider
+
+        mock_create.return_value = Mock()
+        old_cached = repository_tools._cached_provider
+        repository_tools._cached_provider = None
+
+        try:
+            p1 = _get_llm_provider()
+            p2 = _get_llm_provider()
+            assert p1 is p2
+            mock_create.assert_called_once()
+        finally:
+            repository_tools._cached_provider = old_cached
+
+    @patch("src.agents.tools.repository_tools.create_llm_provider")
+    def test_get_llm_provider_invalidates_on_config_change(self, mock_create):
+        """Changing config should create a new provider."""
+        from src.agents.tools import repository_tools
+        from src.agents.tools.repository_tools import _get_llm_provider, set_tool_config
+        from src.agents.config import Config
+
+        mock_create.side_effect = [Mock(), Mock()]
+        old_cached = repository_tools._cached_provider
+        old_config_id = repository_tools._cached_provider_config_id
+        repository_tools._cached_provider = None
+        repository_tools._cached_provider_config_id = None
+
+        try:
+            config_a = Config(model_name="model-a")
+            set_tool_config(config_a)
+            p1 = _get_llm_provider()
+
+            config_b = Config(model_name="model-b")
+            set_tool_config(config_b)
+            p2 = _get_llm_provider()
+
+            assert p1 is not p2
+            assert mock_create.call_count == 2
+        finally:
+            repository_tools._cached_provider = old_cached
+            repository_tools._cached_provider_config_id = old_config_id

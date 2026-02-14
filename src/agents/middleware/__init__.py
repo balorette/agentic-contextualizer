@@ -8,6 +8,7 @@ from .human_in_the_loop import (
     ToolRejectedError,
     APPROVAL_MESSAGES,
 )
+from .token_budget import TokenBudgetMiddleware
 
 __all__ = [
     "BudgetTracker",
@@ -19,4 +20,5 @@ __all__ = [
     "should_approve_expensive_operation",
     "ToolRejectedError",
     "APPROVAL_MESSAGES",
+    "TokenBudgetMiddleware",
 ]

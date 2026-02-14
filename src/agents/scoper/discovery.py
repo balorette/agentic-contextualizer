@@ -55,12 +55,7 @@ def extract_keywords(question: str) -> List[str]:
     return keywords
 
 
-# Directories to always ignore
-IGNORED_DIRS: Set[str] = {
-    ".git", "node_modules", "__pycache__", ".venv", "venv",
-    "dist", "build", ".pytest_cache", ".mypy_cache", ".ruff_cache",
-    "egg-info", ".egg-info", ".tox", ".nox",
-}
+from ..config import DEFAULT_IGNORED_DIRS
 
 # File extensions to search
 SEARCHABLE_EXTENSIONS: Set[str] = {
@@ -91,7 +86,7 @@ def search_relevant_files(
 
     for root, dirs, files in os.walk(repo_path):
         # Prune ignored directories
-        dirs[:] = [d for d in dirs if d not in IGNORED_DIRS and not d.endswith(".egg-info")]
+        dirs[:] = [d for d in dirs if d not in DEFAULT_IGNORED_DIRS and not d.endswith(".egg-info")]
 
         root_path = Path(root)
 

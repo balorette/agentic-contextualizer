@@ -512,3 +512,53 @@ class TestCreateSearchTools:
 
         result = find_tool.invoke({"name": "helper"})
         assert len(result["definitions"]) == 1
+
+    def test_custom_grep_limits(self, tmp_path):
+        """Test that create_search_tools respects custom grep limits."""
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        lines = [f"match line {i}" for i in range(20)]
+        (repo / "data.py").write_text("\n".join(lines))
+
+        backend = LocalFileBackend(repo)
+        tools = create_search_tools(backend, max_grep_results=5, context_lines=1)
+
+        grep_tool = next(t for t in tools if t.name == "grep_in_files")
+        result = grep_tool.invoke({"pattern": "match"})
+
+        assert len(result["matches"]) == 5
+        # With context_lines=1, each match should have at most 1 context line
+        for match in result["matches"]:
+            assert len(match["context_before"]) <= 1
+            assert len(match["context_after"]) <= 1
+
+    def test_custom_find_defs_limit(self, tmp_path):
+        """Test that create_search_tools respects custom find_definitions limit."""
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        lines = [f"def func_{i}(): pass" for i in range(20)]
+        (repo / "funcs.py").write_text("\n".join(lines))
+
+        backend = LocalFileBackend(repo)
+        tools = create_search_tools(backend, max_def_results=3)
+
+        find_tool = next(t for t in tools if t.name == "find_code_definitions")
+        result = find_tool.invoke({"name": "func"})
+
+        assert len(result["definitions"]) == 3
+
+    def test_default_search_limits_unchanged(self, tmp_path):
+        """Test that default limits are preserved when no overrides given."""
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        lines = [f"match line {i}" for i in range(60)]
+        (repo / "data.py").write_text("\n".join(lines))
+
+        backend = LocalFileBackend(repo)
+        tools = create_search_tools(backend)
+
+        grep_tool = next(t for t in tools if t.name == "grep_in_files")
+        result = grep_tool.invoke({"pattern": "match"})
+
+        # Default max_results is 50
+        assert len(result["matches"]) == 50

@@ -2,7 +2,6 @@
 
 from typing import Optional
 from langchain.agents import create_agent
-from langchain.chat_models import init_chat_model
 
 from .tools.repository_tools import (
     scan_structure,
@@ -17,79 +16,19 @@ from .tools.exploration_tools import (
 )
 
 
-AGENT_SYSTEM_PROMPT = """You are a repository context generator agent. Your goal is to analyze codebases and produce comprehensive context documentation for AI coding assistants.
+AGENT_SYSTEM_PROMPT = """You are a repository context generator. Analyze codebases and produce context documentation.
 
-## Available Tools
+## Workflow
 
-You have access to the following tools:
+For initial generation, call tools in this order:
+1. scan_structure - get file listing
+2. extract_metadata - get project type, deps, entry points
+3. analyze_code - deep LLM analysis (pass file_list from step 1)
+4. generate_context - produce final markdown
 
-1. **scan_structure** - Scans repository structure, returns file tree and counts
-2. **extract_metadata** - Extracts project type, dependencies, entry points from config files
-3. **analyze_code** - Performs LLM-based deep code analysis (EXPENSIVE - use wisely!)
-4. **generate_context** - Generates final markdown context file (EXPENSIVE - use wisely!)
-5. **refine_context** - Refines an existing context file based on feedback (EXPENSIVE)
-6. **list_key_files** - Quick utility to list important files from a file tree
-7. **read_file_snippet** - Read specific sections of files for targeted analysis
+For refinement: use refine_context with the request.
 
-## Workflow Guidelines
-
-### For Initial Context Generation:
-Follow this sequence:
-1. Use `scan_structure` to get the repository file tree
-2. Use `extract_metadata` to get project details
-3. Use `analyze_code` to perform deep analysis (1 LLM call)
-4. Use `generate_context` to create the final markdown file (1 LLM call)
-
-Total: 2 expensive LLM calls (analyze + generate)
-
-### For Context Refinement:
-1. User provides path to existing context file
-2. Use `refine_context` with the refinement request (1 LLM call)
-
-### Budget Constraints
-
-- **Target**: Keep expensive LLM calls ≤ 2 per generation
-- **Token Limits**: All tools auto-limit output to prevent overflow
-- **Fail Fast**: If repo is oversized (>10k files), report error and suggest focusing on subdirectory
-
-### Error Handling
-
-- If a tool returns an "error" field, report it clearly to the user
-- Suggest recovery actions (e.g., "Repository too large, try scanning a subdirectory")
-- Don't retry failed operations unless explicitly requested
-
-### Output Format
-
-The final context file should be markdown with YAML frontmatter:
-```markdown
----
-source_repo: /path/to/repo
-scan_date: 2025-01-23T10:30:00Z
-user_summary: "User's description"
-model_used: anthropic/claude-sonnet-4-5-20250929
----
-
-# Repository Context: {repo-name}
-
-## Architecture Overview
-...
-
-## Key Commands
-...
-
-## Code Patterns
-...
-
-## Entry Points
-...
-```
-
-## Important Notes
-
-- Always acknowledge the user's summary/description in your analysis
-- Be concise but thorough in generated context
-- If user requests refinement, focus only on requested changes
-- Report the output path when context is generated successfully
+Keep LLM calls ≤ 2. If a tool returns "error", report it. If >10k files, suggest a subdirectory.
 """
 
 
@@ -98,14 +37,22 @@ def create_contextualizer_agent(
     middleware: Optional[list] = None,
     checkpointer: Optional[object] = None,
     debug: bool = False,
+    base_url: Optional[str] = None,
+    api_key: Optional[str] = None,
+    use_litellm: bool = False,
+    config: Optional["Config"] = None,
 ):
     """Create a repository contextualizer agent.
 
     Args:
-        model_name: LLM model identifier (default: Claude Sonnet 4.5)
+        model_name: LLM model identifier (with or without provider prefix)
+            Examples: "gpt-4o", "openai:gpt-4o", "claude-3-5-sonnet-20241022"
         middleware: Optional list of middleware instances
         checkpointer: Optional checkpointer for state persistence
         debug: Enable verbose logging for graph execution
+        base_url: Optional custom API endpoint URL
+        api_key: Optional API key (if not provided, will be resolved from config)
+        use_litellm: Force use of ChatLiteLLM (recommended for custom gateways)
 
     Returns:
         Compiled StateGraph agent ready for invocation
@@ -114,7 +61,15 @@ def create_contextualizer_agent(
         ```python
         from src.agents.factory import create_contextualizer_agent
 
-        agent = create_contextualizer_agent()
+        # Standard usage (direct provider)
+        agent = create_contextualizer_agent(model_name="gpt-4o")
+
+        # Custom gateway usage
+        agent = create_contextualizer_agent(
+            model_name="gpt-4.1",
+            base_url="https://custom-gateway.com",
+            use_litellm=True
+        )
 
         # Generate context
         result = agent.invoke({
@@ -123,18 +78,25 @@ def create_contextualizer_agent(
                 "content": "Generate context for /path/to/repo. It's a FastAPI REST API."
             }]
         })
-
-        # Refine context
-        result = agent.invoke({
-            "messages": [{
-                "role": "user",
-                "content": "Refine /path/to/context.md: add more auth details"
-            }]
-        })
         ```
     """
-    # Initialize chat model
-    model = init_chat_model(model_name)
+    from .config import Config
+    from .llm.chat_model_factory import build_chat_model, build_token_middleware
+
+    if config is None:
+        config = Config.from_env()
+
+    # Derive use_litellm from config when caller didn't explicitly set it
+    if not use_litellm and config.llm_provider == "litellm":
+        use_litellm = True
+    model = build_chat_model(
+        config=config,
+        model_name=model_name,
+        base_url=base_url,
+        api_key=api_key,
+        use_litellm=use_litellm,
+        debug=debug,
+    )
 
     # Collect all tools
     tools = [
@@ -147,12 +109,15 @@ def create_contextualizer_agent(
         read_file_snippet,
     ]
 
+    budget_mw = build_token_middleware(config, model_name)
+    all_middleware = [budget_mw] + (middleware or [])
+
     # Create agent with tools and system prompt
     agent = create_agent(
         model=model,
         tools=tools,
         system_prompt=AGENT_SYSTEM_PROMPT,
-        middleware=middleware or [],
+        middleware=all_middleware,
         checkpointer=checkpointer,
         debug=debug,
     )
@@ -166,6 +131,10 @@ def create_contextualizer_agent_with_budget(
     model_name: str = "anthropic:claude-sonnet-4-5-20250929",
     checkpointer: Optional[object] = None,
     debug: bool = False,
+    base_url: Optional[str] = None,
+    api_key: Optional[str] = None,
+    use_litellm: bool = False,
+    config: Optional["Config"] = None,
 ):
     """Create agent with budget tracking for token/cost monitoring.
 
@@ -212,7 +181,13 @@ def create_contextualizer_agent_with_budget(
     from .middleware import BudgetTracker
 
     agent = create_contextualizer_agent(
-        model_name=model_name, checkpointer=checkpointer, debug=debug
+        model_name=model_name,
+        checkpointer=checkpointer,
+        debug=debug,
+        base_url=base_url,
+        api_key=api_key,
+        use_litellm=use_litellm,
+        config=config,
     )
 
     tracker = BudgetTracker(max_tokens=max_tokens, max_cost_usd=max_cost_usd)
@@ -220,63 +195,42 @@ def create_contextualizer_agent_with_budget(
     return agent, tracker
 
 
-def create_contextualizer_agent_with_hitl(
+def create_contextualizer_agent_with_checkpointer(
     model_name: str = "anthropic:claude-sonnet-4-5-20250929",
     checkpointer: Optional[object] = None,
     debug: bool = False,
     require_approval_for: Optional[list[str]] = None,
+    base_url: Optional[str] = None,
+    api_key: Optional[str] = None,
+    use_litellm: bool = False,
+    config: Optional["Config"] = None,
 ):
-    """Create agent with human-in-the-loop for expensive operations.
+    """Create agent with state persistence via checkpointer.
 
-    Note: This requires a checkpointer to be enabled for interrupts to work.
-    Human-in-the-loop is implemented using LangGraph's interrupt() function
-    within tools. The agent will pause and wait for approval before executing
-    expensive operations.
+    This creates an agent with checkpointing enabled, which is a
+    prerequisite for future human-in-the-loop approval gates.
+
+    Note: This does NOT currently implement automatic approval gates.
+    Tools do not call interrupt() by default. See docs/roadmap/hitl-approval-gates.md
+    for the planned HITL implementation.
+
+    # ROADMAP: Wire create_approval_tool() wrappers for tools listed in
+    # require_approval_for. See docs/roadmap/hitl-approval-gates.md
 
     Args:
         model_name: LLM model identifier
-        checkpointer: Checkpointer for state persistence (REQUIRED for HITL)
+        checkpointer: Checkpointer for state persistence (REQUIRED)
         debug: Enable verbose logging
-        require_approval_for: List of tool names requiring approval
-            Default: ["analyze_code", "generate_context", "refine_context"]
+        require_approval_for: Reserved for future HITL implementation
+        base_url: Optional custom API endpoint URL
+        api_key: Optional API key
+        use_litellm: Force use of ChatLiteLLM
 
     Returns:
-        Compiled StateGraph agent with human-in-the-loop
-
-    Example:
-        ```python
-        from src.agents.factory import create_contextualizer_agent_with_hitl
-        from src.agents.memory import create_checkpointer, create_agent_config
-        from langgraph.types import Command
-
-        # MUST have checkpointer for HITL
-        checkpointer = create_checkpointer()
-        agent = create_contextualizer_agent_with_hitl(checkpointer=checkpointer)
-
-        config = create_agent_config("/path/to/repo")
-
-        # Start agent - it will pause at expensive operations
-        result = agent.invoke({"messages": [...]}, config=config)
-
-        # Check if interrupted
-        state = agent.get_state(config)
-        if state.next == ("__interrupt__",):
-            print("Approval required:", state.values.get("__interrupt__"))
-
-            # Approve
-            final_result = agent.invoke(
-                Command(resume={"type": "approve"}),
-                config=config
-            )
-        ```
+        Compiled StateGraph agent with checkpointing
 
     Raises:
-        ValueError: If checkpointer is not provided (required for interrupts)
-
-    Note:
-        To actually use interrupts, tools must call interrupt() internally.
-        The tools in this codebase don't have interrupts built-in by default.
-        Use create_approval_tool() to wrap tools with approval logic.
+        ValueError: If checkpointer is not provided
     """
     if checkpointer is None:
         raise ValueError(
@@ -297,10 +251,14 @@ def create_contextualizer_agent_with_hitl(
         model_name=model_name,
         checkpointer=checkpointer,
         debug=debug,
+        base_url=base_url,
+        api_key=api_key,
+        use_litellm=use_litellm,
+        config=config,
     )
 
     if debug:
-        print(f"✓ Human-in-the-loop enabled for: {', '.join(require_approval_for)}")
-        print("  Note: Tools must call interrupt() to pause for approval")
+        print(f"✓ Checkpointing enabled. Approval gates reserved for: {', '.join(require_approval_for)}")
+        print("  Note: HITL approval gates are not yet wired. See docs/roadmap/hitl-approval-gates.md")
 
     return agent

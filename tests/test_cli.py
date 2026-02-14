@@ -185,6 +185,60 @@ class TestCLIGenerate:
         assert result.exit_code == 0
 
 
+class TestPrepareConfig:
+    """Test _prepare_config helper."""
+
+    @patch("src.agents.main.Config.from_env")
+    def test_returns_config_on_valid_key(self, mock_from_env):
+        from src.agents.main import _prepare_config
+
+        config = Mock()
+        config.anthropic_api_key = "test-key"
+        config.api_key = "test-key"
+        config.model_name = "claude-3-5-sonnet-20241022"
+        config.llm_provider = "anthropic"
+        config.api_base_url = None
+        mock_from_env.return_value = config
+
+        result = _prepare_config(None, None)
+        assert result is not None
+
+    @patch("src.agents.main.Config.from_env")
+    def test_returns_none_on_missing_key(self, mock_from_env):
+        from src.agents.main import _prepare_config
+
+        config = Mock()
+        config.anthropic_api_key = None
+        config.api_key = None
+        config.openai_api_key = None
+        config.google_api_key = None
+        config.model_name = "claude-3-5-sonnet-20241022"
+        config.llm_provider = "anthropic"
+        config.api_base_url = None
+        mock_from_env.return_value = config
+
+        result = _prepare_config(None, None)
+        assert result is None
+
+    @patch("src.agents.main.Config.from_env")
+    def test_passes_provider_override(self, mock_from_env):
+        from src.agents.main import _prepare_config
+
+        config = Mock()
+        config.anthropic_api_key = "key"
+        config.api_key = "key"
+        config.model_name = "gpt-4o"
+        config.llm_provider = "litellm"
+        config.api_base_url = None
+        config.openai_api_key = "key"
+        mock_from_env.return_value = config
+
+        _prepare_config("litellm", "gpt-4o")
+        call_kwargs = mock_from_env.call_args[1]
+        assert call_kwargs["cli_overrides"]["llm_provider"] == "litellm"
+        assert call_kwargs["cli_overrides"]["model_name"] == "gpt-4o"
+
+
 class TestCLIRefine:
     """Test the refine command in both modes."""
 
@@ -347,19 +401,23 @@ class TestCLIErrorHandling:
         repo = tmp_path / "repo"
         repo.mkdir()
 
-        # Mock config with no API key
+        # Mock config with no API key - must set all fields _validate_api_key checks
         config_instance = Mock()
         config_instance.api_key = None
+        config_instance.anthropic_api_key = None
+        config_instance.openai_api_key = None
+        config_instance.google_api_key = None
+        config_instance.model_name = "claude-3-5-sonnet-20241022"
+        config_instance.llm_provider = "anthropic"
+        config_instance.api_base_url = None
         mock_config.return_value = config_instance
 
-        # Ensure pipeline mode isn't called if API key check fails
         mock_pipeline.return_value = 0
 
         result = runner.invoke(
             cli, ["generate", str(repo), "-s", "Test"]
         )
 
-        # Check for error message (exit code may vary based on Click version)
         assert "ANTHROPIC_API_KEY not set" in result.output or result.exit_code == 1
 
     @patch("src.agents.config.Config.from_env")
@@ -386,6 +444,25 @@ class TestCLIErrorHandling:
 
         # Verify error return code
         assert result.exit_code == 1 or mock_agent.return_value == 1
+
+
+class TestValidateApiKeyGateway:
+    """Test gateway API key validation."""
+
+    def test_validate_api_key_gateway_with_google_key(self):
+        """Gateway mode should accept google_api_key as valid."""
+        from src.agents.main import _validate_api_key
+        from agents.config import Config
+
+        config = Config(
+            llm_provider="litellm",
+            model_name="gemini-1.5-pro",
+            api_base_url="https://gateway.example.com",
+            google_api_key="test-google-key",
+        )
+        is_valid, error_msg = _validate_api_key(config)
+        assert is_valid is True
+        assert error_msg == ""
 
 
 class TestCLIModeSelection:

@@ -483,13 +483,13 @@ agent, tracker = create_contextualizer_agent_with_budget(
 
 Returns `(agent, BudgetTracker)`.
 
-#### `create_contextualizer_agent_with_hitl()`
+#### `create_contextualizer_agent_with_checkpointer()`
 
 ```python
-from agents.factory import create_contextualizer_agent_with_hitl
+from agents.factory import create_contextualizer_agent_with_checkpointer
 from agents.memory import create_checkpointer
 
-agent = create_contextualizer_agent_with_hitl(
+agent = create_contextualizer_agent_with_checkpointer(
     checkpointer=create_checkpointer(),  # Required
 )
 ```

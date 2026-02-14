@@ -1,15 +1,18 @@
 """Main CLI entry point for Agentic Contextualizer."""
 
+import logging
 import subprocess
 import click
 import yaml
+
+logger = logging.getLogger(__name__)
 from pathlib import Path
 from .config import Config
 from .scanner.structure import StructureScanner
 from .scanner.metadata import MetadataExtractor
 from .analyzer.code_analyzer import CodeAnalyzer
 from .generator.context_generator import ContextGenerator
-from .llm.provider import AnthropicProvider
+from .llm.provider import create_llm_provider
 from .scoper.discovery import extract_keywords, search_relevant_files
 from .scoper.scoped_analyzer import ScopedAnalyzer
 from .scoper.scoped_generator import ScopedGenerator
@@ -40,10 +43,132 @@ def _extract_repo_from_context(context_path: Path) -> str | None:
 
         if isinstance(frontmatter, dict):
             return frontmatter.get("source_repo")
+    except yaml.YAMLError:
+        logger.warning("Failed to parse frontmatter from %s", context_path)
+    except OSError as e:
+        logger.warning("Failed to read context file %s: %s", context_path, e)
     except Exception:
-        # YAML parse errors, file read errors, etc.
-        pass
+        logger.warning("Unexpected error extracting repo from %s", context_path, exc_info=True)
     return None
+
+
+def _validate_api_key(config: Config) -> tuple[bool, str]:
+    """Validate that required API key is set for the chosen provider/model.
+
+    Args:
+        config: Application configuration
+
+    Returns:
+        Tuple of (is_valid, error_message). error_message is empty if valid.
+    """
+    # Strip provider prefix (e.g. "openai:gpt-4o" -> "gpt-4o") for matching
+    from .llm.provider import _strip_provider_prefix
+    normalized_model = _strip_provider_prefix(config.model_name)
+
+    # Local models don't need API keys
+    if normalized_model.startswith(("ollama", "lmstudio")):
+        return True, ""
+
+    # When using a custom gateway (base_url), the gateway handles auth.
+    # Any API key (even a gateway token) is sufficient.
+    if config.llm_provider == "litellm":
+        if config.api_base_url:
+            # Gateway mode - any key set is fine, the gateway handles routing
+            has_any_key = config.openai_api_key or config.anthropic_api_key or config.google_api_key or config.api_key
+            if not has_any_key:
+                return False, "Error: No API key set. Set OPENAI_API_KEY, ANTHROPIC_API_KEY, or GOOGLE_API_KEY for gateway auth."
+            return True, ""
+
+        # Direct LiteLLM (no gateway) - need provider-specific keys
+        if normalized_model.startswith("gpt-") or normalized_model.startswith("o1"):
+            if not config.openai_api_key:
+                return False, "Error: OPENAI_API_KEY not set. Required for OpenAI models with LiteLLM."
+        elif normalized_model.startswith("claude"):
+            if not config.anthropic_api_key:
+                return False, "Error: ANTHROPIC_API_KEY not set. Required for Claude models with LiteLLM."
+        elif normalized_model.startswith(("gemini", "vertex")):
+            if not config.google_api_key:
+                return False, "Error: GOOGLE_API_KEY not set. Required for Google models with LiteLLM."
+        return True, ""
+
+    # For direct Anthropic provider
+    if not config.anthropic_api_key and not config.api_key:
+        return False, "Error: ANTHROPIC_API_KEY not set in environment"
+
+    return True, ""
+
+
+def _prepare_config(provider: str | None, model: str | None) -> Config | None:
+    """Build config with CLI overrides and validate API key.
+
+    Returns Config on success, None on validation failure (error already printed).
+    """
+    cli_overrides = {}
+    if provider:
+        cli_overrides["llm_provider"] = provider
+    if model:
+        cli_overrides["model_name"] = model
+
+    config = Config.from_env(cli_overrides=cli_overrides)
+
+    is_valid, error_msg = _validate_api_key(config)
+    if not is_valid:
+        click.echo(error_msg, err=True)
+        return None
+    return config
+
+
+def _run_agent(agent, user_message: str, agent_config: dict, stream: bool, debug: bool) -> int:
+    """Execute an agent with invoke or stream, returning exit code.
+
+    Handles TTY detection for streaming and common exception handling.
+    """
+    try:
+        if stream:
+            from .streaming import stream_agent_execution, simple_stream_agent_execution
+            import sys
+
+            if sys.stdout.isatty():
+                stream_agent_execution(
+                    agent,
+                    messages=[{"role": "user", "content": user_message}],
+                    config=agent_config,
+                    verbose=debug,
+                )
+            else:
+                simple_stream_agent_execution(
+                    agent,
+                    messages=[{"role": "user", "content": user_message}],
+                    config=agent_config,
+                )
+        else:
+            click.echo("\n🔄 Agent executing...")
+            result = agent.invoke(
+                {"messages": [{"role": "user", "content": user_message}]},
+                config=agent_config,
+            )
+            messages = result.get("messages", [])
+            if not messages:
+                click.echo("\n⚠️ Agent returned no messages.", err=True)
+                return 1
+            final_message = messages[-1]
+            output_content = (
+                final_message.content
+                if hasattr(final_message, "content")
+                else str(final_message)
+            )
+            click.echo("\n📋 Agent Response:")
+            click.echo(output_content)
+            click.echo("\n✅ Agent execution complete")
+
+        return 0
+
+    except Exception as e:
+        click.echo(f"\n❌ Agent execution failed: {e}", err=True)
+        if debug:
+            import traceback
+            traceback.print_exc()
+        return 1
 
 
 @click.group()
@@ -63,9 +188,12 @@ def cli():
     default="pipeline",
     help="Execution mode: pipeline (deterministic) or agent (agentic)",
 )
+@click.option("--provider", help="LLM provider: anthropic or litellm")
+@click.option("--model", help="Model name (e.g., gpt-4o, claude-3-5-sonnet-20241022)")
 @click.option("--debug", is_flag=True, help="Enable debug output for agent mode")
 @click.option("--stream", is_flag=True, help="Enable streaming output for agent mode (real-time feedback)")
-def generate(source: str, summary: str, output: str | None, mode: str, debug: bool, stream: bool):
+@click.pass_context
+def generate(ctx, source: str, summary: str, output: str | None, mode: str, provider: str | None, model: str | None, debug: bool, stream: bool):
     """Generate context for a repository.
 
     SOURCE can be a local path or a GitHub URL.
@@ -83,29 +211,30 @@ def generate(source: str, summary: str, output: str | None, mode: str, debug: bo
         # Agent mode with streaming output (real-time feedback)
         python -m agents.main generate /path/to/repo -s "API" --mode agent --stream
     """
-    config = Config.from_env()
-
-    if not config.api_key:
-        click.echo("Error: ANTHROPIC_API_KEY not set in environment", err=True)
-        return 1
+    config = _prepare_config(provider, model)
+    if config is None:
+        ctx.exit(1)
+        return
 
     try:
         with resolve_repo(source) as repo:
             if mode == "agent":
-                return _generate_agent_mode(repo, summary, config, debug, stream)
+                rc = _generate_agent_mode(repo, summary, config, debug, stream)
             else:
-                return _generate_pipeline_mode(repo, summary, config)
+                rc = _generate_pipeline_mode(repo, summary, config)
+            if rc:
+                ctx.exit(rc)
     except subprocess.CalledProcessError as e:
         click.echo("Error: Failed to clone repository. Check the URL and your git credentials.", err=True)
         if debug:
             click.echo(f"Details: {e.stderr}", err=True)
-        return 1
+        ctx.exit(1)
     except subprocess.TimeoutExpired:
         click.echo("Error: Clone timed out. The repository may be too large or the network is slow.", err=True)
-        return 1
+        ctx.exit(1)
     except ValueError as e:
         click.echo(f"Error: {e}", err=True)
-        return 1
+        ctx.exit(1)
 
 
 def _generate_pipeline_mode(repo: Path, summary: str, config: Config) -> int:
@@ -129,7 +258,7 @@ def _generate_pipeline_mode(repo: Path, summary: str, config: Config) -> int:
 
     # Step 3: Code Analysis (LLM Call 1)
     click.echo(f"\n🤖 Analyzing code with {config.model_name}...")
-    llm = AnthropicProvider(config.model_name, config.api_key)
+    llm = create_llm_provider(config)
     analyzer = CodeAnalyzer(llm)
     analysis = analyzer.analyze(repo, metadata, structure["tree"], summary)
     click.echo(f"   Architecture: {', '.join(analysis.architecture_patterns)}")
@@ -148,11 +277,17 @@ def _generate_agent_mode(repo: Path, summary: str, config: Config, debug: bool, 
     from .factory import create_contextualizer_agent
     from .memory import create_checkpointer, create_agent_config
     from .observability import configure_tracing, is_tracing_enabled
+    from .tools.repository_tools import set_tool_config, set_allowed_repo_root
 
     click.echo(f"🤖 Agent mode: Analyzing repository: {repo}")
 
     if stream:
         click.echo("   Streaming: Enabled")
+
+    # Set tool config so tools use the same config as the agent
+    # This ensures CLI flags propagate to tools
+    set_tool_config(config)
+    set_allowed_repo_root(repo)
 
     # Configure tracing
     configure_tracing()
@@ -160,9 +295,18 @@ def _generate_agent_mode(repo: Path, summary: str, config: Config, debug: bool, 
     # Create checkpointer for state persistence
     checkpointer = create_checkpointer()
 
+    # Resolve API key for the selected model
+    from .llm.provider import _resolve_api_key_for_model
+    api_key = _resolve_api_key_for_model(config.model_name, config)
+
     # Create agent
     agent = create_contextualizer_agent(
-        model_name=config.model_name if config.model_name.startswith("anthropic:") else f"anthropic:{config.model_name}", checkpointer=checkpointer, debug=debug
+        model_name=config.model_name,
+        checkpointer=checkpointer,
+        debug=debug,
+        base_url=config.api_base_url,
+        api_key=api_key,
+        config=config,
     )
 
     # Create agent configuration with thread ID
@@ -175,52 +319,7 @@ def _generate_agent_mode(repo: Path, summary: str, config: Config, debug: bool, 
     if is_tracing_enabled():
         click.echo(f"   Tracing: Enabled")
 
-    # Invoke agent
-    try:
-        if stream:
-            # Use streaming for real-time feedback
-            from .streaming import stream_agent_execution, simple_stream_agent_execution
-            import sys
-
-            # Use rich formatting if stdout is a TTY, otherwise use simple streaming
-            if sys.stdout.isatty():
-                stream_agent_execution(
-                    agent,
-                    messages=[{"role": "user", "content": user_message}],
-                    config=agent_config,
-                    verbose=debug,
-                )
-            else:
-                simple_stream_agent_execution(
-                    agent,
-                    messages=[{"role": "user", "content": user_message}],
-                    config=agent_config,
-                )
-        else:
-            # Use standard invocation
-            click.echo("\n🔄 Agent executing...")
-
-            result = agent.invoke(
-                {"messages": [{"role": "user", "content": user_message}]}, config=agent_config
-            )
-
-            # Extract final message
-            final_message = result.get("messages", [])[-1]
-            output_content = final_message.content if hasattr(final_message, "content") else str(final_message)
-
-            click.echo("\n📋 Agent Response:")
-            click.echo(output_content)
-            click.echo("\n✅ Agent execution complete")
-
-        return 0
-
-    except Exception as e:
-        click.echo(f"\n❌ Agent execution failed: {e}", err=True)
-        if debug:
-            import traceback
-
-            traceback.print_exc()
-        return 1
+    return _run_agent(agent, user_message, agent_config, stream, debug)
 
 
 @cli.command()
@@ -233,9 +332,12 @@ def _generate_agent_mode(repo: Path, summary: str, config: Config, debug: bool, 
     default="pipeline",
     help="Execution mode: pipeline (deterministic) or agent (agentic)",
 )
+@click.option("--provider", help="LLM provider: anthropic or litellm")
+@click.option("--model", help="Model name (e.g., gpt-4o, claude-3-5-sonnet-20241022)")
 @click.option("--debug", is_flag=True, help="Enable debug output for agent mode")
 @click.option("--stream", is_flag=True, help="Enable streaming output for agent mode (real-time feedback)")
-def refine(context_file: str, request: str, mode: str, debug: bool, stream: bool):
+@click.pass_context
+def refine(ctx, context_file: str, request: str, mode: str, provider: str | None, model: str | None, debug: bool, stream: bool):
     """Refine an existing context file.
 
     Examples:
@@ -249,23 +351,24 @@ def refine(context_file: str, request: str, mode: str, debug: bool, stream: bool
         python -m agents.main refine contexts/myapp/context.md -r "Add auth" --mode agent --stream
     """
     context_path = Path(context_file)
-    config = Config.from_env()
-
-    if not config.api_key:
-        click.echo("Error: ANTHROPIC_API_KEY not set in environment", err=True)
-        return 1
+    config = _prepare_config(provider, model)
+    if config is None:
+        ctx.exit(1)
+        return
 
     if mode == "agent":
-        return _refine_agent_mode(context_path, request, config, debug, stream)
+        rc = _refine_agent_mode(context_path, request, config, debug, stream)
     else:
-        return _refine_pipeline_mode(context_path, request, config)
+        rc = _refine_pipeline_mode(context_path, request, config)
+    if rc:
+        ctx.exit(rc)
 
 
 def _refine_pipeline_mode(context_path: Path, request: str, config: Config) -> int:
     """Refine context using deterministic pipeline mode."""
     click.echo(f"🔄 Refining: {context_path}")
 
-    llm = AnthropicProvider(config.model_name, config.api_key)
+    llm = create_llm_provider(config)
     generator = ContextGenerator(llm, config.output_dir)
 
     updated_path = generator.refine(context_path, request)
@@ -279,15 +382,27 @@ def _refine_agent_mode(context_path: Path, request: str, config: Config, debug: 
     from .factory import create_contextualizer_agent
     from .memory import create_checkpointer, create_agent_config
     from .observability import configure_tracing, is_tracing_enabled
+    from .tools.repository_tools import set_tool_config, set_allowed_repo_root
 
     click.echo(f"🤖 Agent mode: Refining context: {context_path}")
+
+    # Set tool config for consistency
+    set_tool_config(config)
 
     if stream:
         click.echo("   Streaming: Enabled")
 
-    # Try to infer repo path from context file location
-    # Context files are stored as contexts/{repo-name}/context.md
-    repo_path = context_path.parent.parent  # Go up two levels
+    # Try to get repo path from context file frontmatter, fall back to parent dir
+    source_repo = _extract_repo_from_context(context_path)
+    if source_repo and Path(source_repo).is_dir():
+        repo_path = Path(source_repo).resolve()
+    else:
+        # Fallback: context files are stored as contexts/{repo-name}/context.md
+        repo_path = context_path.parent
+
+    # Restrict tool file access to the repo being refined
+    if repo_path.is_dir():
+        set_allowed_repo_root(repo_path)
 
     # Configure tracing
     configure_tracing()
@@ -295,9 +410,18 @@ def _refine_agent_mode(context_path: Path, request: str, config: Config, debug: 
     # Create checkpointer (same instance will restore previous conversation)
     checkpointer = create_checkpointer()
 
+    # Resolve API key for the selected model
+    from .llm.provider import _resolve_api_key_for_model
+    api_key = _resolve_api_key_for_model(config.model_name, config)
+
     # Create agent
     agent = create_contextualizer_agent(
-        model_name=f"anthropic:{config.model_name}", checkpointer=checkpointer, debug=debug
+        model_name=config.model_name,
+        checkpointer=checkpointer,
+        debug=debug,
+        base_url=config.api_base_url,
+        api_key=api_key,
+        config=config,
     )
 
     # Use same thread ID as generation (based on repo path)
@@ -311,52 +435,7 @@ def _refine_agent_mode(context_path: Path, request: str, config: Config, debug: 
     if is_tracing_enabled():
         click.echo(f"   Tracing: Enabled")
 
-    # Invoke agent
-    try:
-        if stream:
-            # Use streaming for real-time feedback
-            from .streaming import stream_agent_execution, simple_stream_agent_execution
-            import sys
-
-            # Use rich formatting if stdout is a TTY, otherwise use simple streaming
-            if sys.stdout.isatty():
-                stream_agent_execution(
-                    agent,
-                    messages=[{"role": "user", "content": user_message}],
-                    config=agent_config,
-                    verbose=debug,
-                )
-            else:
-                simple_stream_agent_execution(
-                    agent,
-                    messages=[{"role": "user", "content": user_message}],
-                    config=agent_config,
-                )
-        else:
-            # Use standard invocation
-            click.echo("\n🔄 Agent executing...")
-
-            result = agent.invoke(
-                {"messages": [{"role": "user", "content": user_message}]}, config=agent_config
-            )
-
-            # Extract final message
-            final_message = result.get("messages", [])[-1]
-            output_content = final_message.content if hasattr(final_message, "content") else str(final_message)
-
-            click.echo("\n📋 Agent Response:")
-            click.echo(output_content)
-            click.echo("\n✅ Agent execution complete")
-
-        return 0
-
-    except Exception as e:
-        click.echo(f"\n❌ Agent execution failed: {e}", err=True)
-        if debug:
-            import traceback
-
-            traceback.print_exc()
-        return 1
+    return _run_agent(agent, user_message, agent_config, stream, debug)
 
 
 @cli.command()
@@ -370,9 +449,12 @@ def _refine_agent_mode(context_path: Path, request: str, config: Config, debug: 
     default="pipeline",
     help="Execution mode: pipeline (deterministic) or agent (agentic)",
 )
+@click.option("--provider", help="LLM provider: anthropic or litellm")
+@click.option("--model", help="Model name (e.g., gpt-4o, claude-3-5-sonnet-20241022)")
 @click.option("--debug", is_flag=True, help="Enable debug output")
 @click.option("--stream", is_flag=True, help="Enable streaming output (agent mode)")
-def scope(source: str, question: str, output: str | None, mode: str, debug: bool, stream: bool):
+@click.pass_context
+def scope(ctx, source: str, question: str, output: str | None, mode: str, provider: str | None, model: str | None, debug: bool, stream: bool):
     """Generate scoped context for a specific question.
 
     SOURCE can be:
@@ -393,39 +475,43 @@ def scope(source: str, question: str, output: str | None, mode: str, debug: bool
         # Agent mode with streaming
         python -m agents.main scope /path/to/repo -q "auth" --mode agent --stream
     """
-    config = Config.from_env()
-
-    if not config.api_key:
-        click.echo("Error: ANTHROPIC_API_KEY not set in environment", err=True)
-        return 1
+    config = _prepare_config(provider, model)
+    if config is None:
+        ctx.exit(1)
+        return
 
     # Context files are handled directly (no resolve_repo needed)
     source_path = Path(source)
     if source_path.is_file() and source_path.suffix == ".md":
         source_path = source_path.resolve()
         if mode == "agent":
-            return _scope_agent_mode(source_path, question, config, True, debug, stream)
+            rc = _scope_agent_mode(source_path, question, config, True, debug, stream)
         else:
-            return _scope_pipeline_mode(source_path, question, config, True, output)
+            rc = _scope_pipeline_mode(source_path, question, config, True, output)
+        if rc:
+            ctx.exit(rc)
+        return
 
     # Repo path or GitHub URL - resolve it
     try:
         with resolve_repo(source) as repo:
             if mode == "agent":
-                return _scope_agent_mode(repo, question, config, False, debug, stream)
+                rc = _scope_agent_mode(repo, question, config, False, debug, stream)
             else:
-                return _scope_pipeline_mode(repo, question, config, False, output)
+                rc = _scope_pipeline_mode(repo, question, config, False, output)
+            if rc:
+                ctx.exit(rc)
     except subprocess.CalledProcessError as e:
         click.echo("Error: Failed to clone repository. Check the URL and your git credentials.", err=True)
         if debug:
             click.echo(f"Details: {e.stderr}", err=True)
-        return 1
+        ctx.exit(1)
     except subprocess.TimeoutExpired:
         click.echo("Error: Clone timed out. The repository may be too large or the network is slow.", err=True)
-        return 1
+        ctx.exit(1)
     except ValueError as e:
         click.echo(f"Error: {e}", err=True)
-        return 1
+        ctx.exit(1)
 
 
 def _scope_pipeline_mode(
@@ -485,7 +571,7 @@ def _scope_pipeline_mode(
 
     # Phase 2: LLM-guided exploration
     click.echo(f"\n🤖 Phase 2: Exploration with {config.model_name}...")
-    llm = AnthropicProvider(config.model_name, config.api_key)
+    llm = create_llm_provider(config)
     analyzer = ScopedAnalyzer(llm)
 
     analysis_result = analyzer.analyze(
@@ -529,6 +615,10 @@ def _scope_agent_mode(
     """Generate scoped context using agent mode with dedicated scoped agent."""
     from .scoper import create_scoped_agent
     from .memory import create_checkpointer, create_agent_config
+    from .tools.repository_tools import set_tool_config, set_allowed_repo_root
+
+    # Set tool config for consistency
+    set_tool_config(config)
     from .observability import configure_tracing, is_tracing_enabled
 
     click.echo(f"🤖 Agent mode: Scoping '{question}'")
@@ -548,20 +638,30 @@ def _scope_agent_mode(
     else:
         repo_path = source_path
 
+    # Restrict tool file access to the target repo
+    if repo_path.is_dir():
+        set_allowed_repo_root(repo_path)
+
     # Configure tracing
     configure_tracing()
 
     # Create checkpointer
     checkpointer = create_checkpointer()
 
+    # Resolve API key for the selected model
+    from .llm.provider import _resolve_api_key_for_model
+    api_key = _resolve_api_key_for_model(config.model_name, config)
+
     # Create scoped agent with dedicated tools
-    model_name = config.model_name if config.model_name.startswith("anthropic:") else f"anthropic:{config.model_name}"
     agent = create_scoped_agent(
         repo_path=repo_path,
-        model_name=model_name,
+        model_name=config.model_name,
         checkpointer=checkpointer,
         output_dir=config.output_dir,
         debug=debug,
+        api_key=api_key,
+        base_url=config.api_base_url,
+        config=config,
     )
 
     # Create agent configuration
@@ -574,44 +674,7 @@ def _scope_agent_mode(
     if is_tracing_enabled():
         click.echo("   Tracing: Enabled")
 
-    try:
-        if stream:
-            from .streaming import stream_agent_execution, simple_stream_agent_execution
-            import sys
-
-            if sys.stdout.isatty():
-                stream_agent_execution(
-                    agent,
-                    messages=[{"role": "user", "content": user_message}],
-                    config=agent_config,
-                    verbose=debug,
-                )
-            else:
-                simple_stream_agent_execution(
-                    agent,
-                    messages=[{"role": "user", "content": user_message}],
-                    config=agent_config,
-                )
-        else:
-            click.echo("\n🔄 Agent executing...")
-            result = agent.invoke(
-                {"messages": [{"role": "user", "content": user_message}]},
-                config=agent_config,
-            )
-            final_message = result.get("messages", [])[-1]
-            output_content = final_message.content if hasattr(final_message, "content") else str(final_message)
-            click.echo("\n📋 Agent Response:")
-            click.echo(output_content)
-            click.echo("\n✅ Agent execution complete")
-
-        return 0
-
-    except Exception as e:
-        click.echo(f"\n❌ Agent execution failed: {e}", err=True)
-        if debug:
-            import traceback
-            traceback.print_exc()
-        return 1
+    return _run_agent(agent, user_message, agent_config, stream, debug)
 
 
 if __name__ == "__main__":

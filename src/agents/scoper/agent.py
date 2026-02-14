@@ -1,10 +1,12 @@
 """Scoped context agent factory."""
 
+import logging
 from pathlib import Path
 from typing import Optional
 from langchain.agents import create_agent
-from langchain.chat_models import init_chat_model
 from langchain_core.tools import tool
+
+logger = logging.getLogger(__name__)
 
 from ..tools import (
     FileBackend,
@@ -15,7 +17,7 @@ from ..tools import (
     create_search_tools,
 )
 from .scoped_generator import ScopedGenerator
-from ..llm.provider import AnthropicProvider
+from ..llm.provider import create_llm_provider
 from ..config import Config
 
 
@@ -35,7 +37,7 @@ You have access to the following tools:
 5. **extract_file_imports** - Parse imports from Python/JS/TS files to find related code
 
 ### Output Generation
-6. **generate_scoped_context** - Generate the final scoped context markdown file
+6. **generate_scoped_context** - Generate the final scoped context markdown file (pass file paths, not contents)
 
 ## Workflow Strategy
 
@@ -59,7 +61,10 @@ Follow this exploration strategy:
 - Use grep to find usages of key functions
 
 ### Step 4: Generate
-When you have sufficient context (typically 5-15 relevant files), use `generate_scoped_context` to produce the final documentation. **Include code references** with specific line numbers.
+When you have sufficient context (typically 5-15 relevant files), use `generate_scoped_context` with:
+- The list of **file paths** you found relevant (the tool reads contents automatically)
+- Your analysis and insights
+- Code references with specific line numbers
 
 ## Guidelines
 
@@ -69,6 +74,7 @@ When you have sufficient context (typically 5-15 relevant files), use `generate_
 - **Imports**: Following imports reveals architecture
 - **Line Numbers**: Track and report specific line numbers for key code
 - **Confidence**: Generate output when you can answer the question, not when you've read everything
+- **File Paths**: When calling generate_scoped_context, pass file paths — NOT file contents. The tool reads files automatically.
 
 ## Output Format
 
@@ -78,6 +84,17 @@ The final scoped context should answer the user's question with:
 - Key files to examine
 - Usage examples if available
 - A Code References section listing important file:line locations
+
+## Token Economy
+
+Every tool result is added to the conversation and sent with each subsequent API call. Large results compound quickly.
+
+- **grep_in_files**: Start with `max_results=5`. Only increase if you need more matches.
+- **search_for_files**: Start with `max_results=5`. Narrow with more specific keywords rather than increasing results.
+- **find_code_definitions**: Start with `max_results=5`.
+- **read_file**: Large files are automatically truncated. If you only need a section, note the relevant lines and move on.
+- Prefer targeted grep searches over reading entire files.
+- If a tool returns too many results, refine the query instead of reading them all.
 
 ## Important Notes
 
@@ -97,6 +114,10 @@ def create_scoped_agent(
     checkpointer: Optional[object] = None,
     output_dir: str = "contexts",
     debug: bool = False,
+    base_url: Optional[str] = None,
+    api_key: Optional[str] = None,
+    use_litellm: bool = False,
+    config: Optional["Config"] = None,
 ):
     """Create a scoped context generation agent.
 
@@ -107,6 +128,7 @@ def create_scoped_agent(
         checkpointer: Optional checkpointer for state persistence
         output_dir: Directory for output files
         debug: Enable verbose logging
+        base_url: Optional custom API endpoint URL
 
     Returns:
         Compiled StateGraph agent ready for invocation
@@ -131,33 +153,57 @@ def create_scoped_agent(
     backend = file_backend or LocalFileBackend(repo_path)
 
     # Initialize chat model
-    model = init_chat_model(model_name)
+    if config is None:
+        config = Config.from_env()
+
+    # Derive use_litellm from config when caller didn't explicitly set it
+    if not use_litellm and config.llm_provider == "litellm":
+        use_litellm = True
+
+    from ..llm.chat_model_factory import build_chat_model, build_token_middleware
+    from ..llm.rate_limiting import TPMThrottle
+
+    model = build_chat_model(
+        config=config,
+        model_name=model_name,
+        base_url=base_url,
+        api_key=api_key,
+        use_litellm=use_litellm,
+        debug=debug,
+    )
+
+    # Create shared throttle instance so agent loop and generation LLM
+    # are aware of each other's token usage
+    throttle = TPMThrottle(config.max_tpm, config.tpm_safety_factor)
 
     # Create file, analysis, and code search tools bound to backend
-    file_tools = create_file_tools(backend)
+    # Use tighter limits for agent mode to reduce token consumption
+    file_tools = create_file_tools(backend, max_chars=8000, max_search_results=15)
     analysis_tools = create_analysis_tools(backend)
-    code_search_tools = create_search_tools(backend)
+    code_search_tools = create_search_tools(
+        backend, max_grep_results=15, max_def_results=15, context_lines=1
+    )
 
     # Create the generation tool (needs LLM and output config)
-    config = Config.from_env()
-    llm_provider = AnthropicProvider(config.model_name, config.api_key)
+    # Reuse the config from above to ensure consistent credentials
+    llm_provider = create_llm_provider(config, throttle=throttle)
     generator = ScopedGenerator(llm_provider, output_dir)
 
     @tool
     def generate_scoped_context(
         question: str,
-        relevant_files: dict[str, str],
+        relevant_file_paths: list[str],
         insights: str,
         code_references: list[dict] | None = None,
     ) -> dict:
         """Generate the final scoped context markdown file.
 
         Call this when you have gathered sufficient context to answer the question.
-        This will create a markdown file with focused documentation.
+        Pass the PATHS of relevant files — the tool reads their contents automatically.
 
         Args:
             question: The original scope question being answered
-            relevant_files: Dictionary mapping file paths to their content
+            relevant_file_paths: List of file paths the agent determined are relevant
             insights: Your analysis and insights about the code
             code_references: Optional list of code reference dicts with keys:
                 - path: File path
@@ -171,18 +217,39 @@ def create_scoped_agent(
             - error: Error message if generation failed
         """
         try:
+            if not relevant_file_paths:
+                return {
+                    "output_path": None,
+                    "error": "relevant_file_paths must not be empty.",
+                }
+
+            # Read file contents via backend
+            relevant_files = {}
+            for file_path in relevant_file_paths:
+                content = backend.read_file(file_path)
+                if content is not None:
+                    relevant_files[file_path] = content
+
+            if not relevant_files:
+                return {
+                    "output_path": None,
+                    "error": f"Could not read any of the {len(relevant_file_paths)} provided file paths.",
+                }
+
             # Convert code reference dicts to CodeReference objects
             refs = None
             if code_references:
-                refs = [
-                    CodeReference(
-                        path=ref["path"],
-                        line_start=ref["line_start"],
-                        line_end=ref.get("line_end"),
-                        description=ref["description"],
-                    )
-                    for ref in code_references
-                ]
+                refs = []
+                for ref in code_references:
+                    try:
+                        refs.append(CodeReference(
+                            path=ref["path"],
+                            line_start=ref["line_start"],
+                            line_end=ref.get("line_end"),
+                            description=ref.get("description", ""),
+                        ))
+                    except (KeyError, TypeError, ValueError):
+                        continue  # Skip malformed references
 
             output_path = generator.generate(
                 repo_name=repo_path.name,
@@ -198,6 +265,7 @@ def create_scoped_agent(
                 "error": None,
             }
         except Exception as e:
+            logger.exception("generate_scoped_context failed")
             return {
                 "output_path": None,
                 "error": str(e),
@@ -206,12 +274,14 @@ def create_scoped_agent(
     # Combine all tools
     tools = file_tools + analysis_tools + code_search_tools + [generate_scoped_context]
 
+    budget_mw = build_token_middleware(config, model_name, throttle=throttle)
+
     # Create agent
     agent = create_agent(
         model=model,
         tools=tools,
         system_prompt=SCOPED_AGENT_SYSTEM_PROMPT,
-        middleware=[],
+        middleware=[budget_mw],
         checkpointer=checkpointer,
         debug=debug,
     )
@@ -227,6 +297,8 @@ def create_scoped_agent_with_budget(
     checkpointer: Optional[object] = None,
     output_dir: str = "contexts",
     debug: bool = False,
+    base_url: Optional[str] = None,
+    config: Optional["Config"] = None,
 ):
     """Create scoped agent with budget tracking.
 
@@ -238,6 +310,7 @@ def create_scoped_agent_with_budget(
         checkpointer: Optional checkpointer for state persistence
         output_dir: Directory for output files
         debug: Enable verbose logging
+        base_url: Optional custom API endpoint URL
 
     Returns:
         Tuple of (agent, budget_tracker)
@@ -250,6 +323,8 @@ def create_scoped_agent_with_budget(
         checkpointer=checkpointer,
         output_dir=output_dir,
         debug=debug,
+        base_url=base_url,
+        config=config,
     )
 
     tracker = BudgetTracker(max_tokens=max_tokens, max_cost_usd=max_cost_usd)

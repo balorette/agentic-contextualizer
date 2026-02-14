@@ -1,127 +1,220 @@
 """LangChain tool wrappers for repository analysis pipeline."""
 
-from pathlib import Path
+import logging
+from pathlib import Path, PurePosixPath
 from typing import Any
+from contextvars import ContextVar
 from langchain_core.tools import tool
+
+logger = logging.getLogger(__name__)
 
 from ..config import Config
 from ..scanner.structure import StructureScanner
 from ..scanner.metadata import MetadataExtractor
 from ..analyzer.code_analyzer import CodeAnalyzer
 from ..generator.context_generator import ContextGenerator
-from ..llm.provider import AnthropicProvider
+from ..llm.provider import LLMProvider, create_llm_provider
 from ..models import ProjectMetadata, CodeAnalysis
 
-# Module-level initialization (shared across tool calls for efficiency)
-_config = Config.from_env()
-_scanner = StructureScanner(_config)
-_metadata_extractor = MetadataExtractor()
+_tool_config: ContextVar[Config | None] = ContextVar('tool_config', default=None)
+_allowed_repo_root: ContextVar[Path | None] = ContextVar('allowed_repo_root', default=None)
+
+# Lazily initialized fallback (was import-time; now deferred)
+_default_config: Config | None = None
+
+# Cached LLM provider so consecutive tool calls share TPM throttle state
+_cached_provider: LLMProvider | None = None
+_cached_provider_config_id: int | None = None
 
 
-def _get_llm_provider() -> AnthropicProvider:
-    """Get LLM provider instance from config.
+def set_tool_config(config: Config) -> None:
+    """Set the config to be used by tools in this context."""
+    _tool_config.set(config)
+
+
+def set_allowed_repo_root(repo_path: Path) -> None:
+    """Set the allowed repository root for path traversal protection.
+
+    Must be called before agent execution so that tools can validate
+    that LLM-supplied paths stay within the target repository.
+    """
+    _allowed_repo_root.set(repo_path.resolve())
+
+
+def _validate_repo_path(repo_path: str) -> Path | None:
+    """Validate that repo_path is within the allowed root.
+
+    Returns the resolved Path if valid, or None if the path
+    escapes the allowed boundary (or no boundary is set and the
+    path doesn't exist as a directory).
+    """
+    resolved = Path(repo_path).resolve()
+    allowed = _allowed_repo_root.get(None)
+    if allowed is not None:
+        try:
+            resolved.relative_to(allowed)
+        except ValueError:
+            return None
+    if not resolved.is_dir():
+        return None
+    return resolved
+
+
+def _get_config() -> Config:
+    """Get current config from context or lazily create fallback."""
+    config = _tool_config.get(None)
+    if config is not None:
+        return config
+    global _default_config
+    if _default_config is None:
+        _default_config = Config.from_env()
+    return _default_config
+
+
+def _get_llm_provider() -> LLMProvider:
+    """Get or create a cached LLM provider for the current config.
+
+    Caching ensures that consecutive tool calls (e.g. analyze_code then
+    generate_context) share the same TPMThrottle window rather than each
+    getting a fresh budget.
 
     Returns:
-        Configured Anthropic LLM provider
+        Configured LLM provider (cached per config identity)
     """
-    return AnthropicProvider(_config.model_name, _config.api_key)
+    global _cached_provider, _cached_provider_config_id
+    config = _get_config()
+    config_id = id(config)
+    if _cached_provider is not None and _cached_provider_config_id == config_id:
+        return _cached_provider
+    _cached_provider = create_llm_provider(config)
+    _cached_provider_config_id = config_id
+    return _cached_provider
+
+
+def _get_scanner() -> StructureScanner:
+    """Get StructureScanner instance from current config.
+
+    Returns:
+        Configured scanner
+    """
+    config = _get_config()
+    return StructureScanner(config)
 
 
 def _get_context_generator() -> ContextGenerator:
-    """Get ContextGenerator instance.
+    """Get ContextGenerator instance from current config.
 
     Returns:
         Configured context generator
     """
+    config = _get_config()
     llm = _get_llm_provider()
-    return ContextGenerator(llm, _config.output_dir)
+    return ContextGenerator(llm, config.output_dir)
+
+
+def _flatten_tree(root: dict) -> list[str]:
+    """Flatten nested tree dict into a compact list of repo-relative paths.
+
+    The root directory name is excluded from output paths so that results
+    are repo-relative (e.g. ``src/main.py`` instead of ``myrepo/src/main.py``).
+    """
+
+    def _walk(node: dict, prefix: str) -> list[str]:
+        paths: list[str] = []
+        name = node.get("name", "")
+        # Use PurePosixPath for consistent forward-slash separators
+        # regardless of host OS (context files are portable)
+        path = str(PurePosixPath(prefix) / name) if prefix else name
+        if node.get("type") == "file":
+            paths.append(path)
+        elif node.get("type") == "directory":
+            for child in node.get("children", []):
+                paths.extend(_walk(child, path))
+        return paths
+
+    # Skip root directory name — start from its children
+    paths: list[str] = []
+    for child in root.get("children", []):
+        paths.extend(_walk(child, ""))
+    return paths
 
 
 @tool
 def scan_structure(repo_path: str) -> dict[str, Any]:
-    """Scan repository structure and identify key files.
-
-    Use this tool to get a complete overview of the repository's file structure,
-    including directory tree, file counts, and all file paths. This is typically
-    the first step in analyzing a repository.
+    """Scan repository structure. Returns a flat file listing, file counts, and directory counts.
 
     Args:
         repo_path: Absolute path to the repository root directory
 
     Returns:
-        Dictionary containing:
-        - tree: Nested directory structure
-        - all_files: List of all file paths (limited to first 100 for efficiency)
-        - total_files: Total count of files
-        - total_dirs: Total count of directories
-        - error: Error message if scan failed
+        Dictionary with file_list, total_files, total_dirs, or error.
     """
     try:
-        result = _scanner.scan(Path(repo_path))
+        validated = _validate_repo_path(repo_path)
+        if validated is None:
+            return {"error": f"Invalid or disallowed repository path: {repo_path}"}
+        config = _get_config()
+        scanner = _get_scanner()
+        result = scanner.scan(validated)
+        # Flatten tree to compact list of relative paths (saves ~80% tokens vs nested JSON)
+        flat_files = _flatten_tree(result["tree"])
+        limit = config.max_scan_files
         return {
-            "tree": result["tree"],
-            "all_files": result["all_files"][:100],  # Limit to avoid token overflow
+            "file_list": flat_files[:limit],
             "total_files": result["total_files"],
             "total_dirs": result["total_dirs"],
         }
+    except (OSError, ValueError) as e:
+        return {"error": f"Failed to scan repository: {str(e)}"}
     except Exception as e:
+        logger.exception("Unexpected error in scan_structure")
         return {"error": f"Failed to scan repository: {str(e)}"}
 
 
 @tool
 def extract_metadata(repo_path: str) -> dict[str, Any]:
-    """Extract project metadata from configuration files.
-
-    Analyzes package.json, pyproject.toml, Cargo.toml, and other config files
-    to determine project type, dependencies, entry points, and key files.
-    Call this after scan_structure to get project-specific information.
+    """Extract project type, dependencies, entry points from config files.
 
     Args:
         repo_path: Absolute path to the repository root directory
 
     Returns:
-        Dictionary containing:
-        - project_type: Detected type (python, node, rust, go, java, or None)
-        - dependencies: Dictionary of dependency name -> version (limited to 20)
-        - entry_points: List of identified entry point files
-        - key_files: List of important configuration files (limited to 20)
-        - error: Error message if extraction failed
+        Dictionary with project_type, dependencies, entry_points, key_files, or error.
     """
     try:
-        metadata = _metadata_extractor.extract(Path(repo_path))
+        validated = _validate_repo_path(repo_path)
+        if validated is None:
+            return {"error": f"Invalid or disallowed repository path: {repo_path}"}
+        # MetadataExtractor is stateless, can be instantiated per call
+        extractor = MetadataExtractor()
+        metadata = extractor.extract(validated)
         return {
             "project_type": metadata.project_type,
             "dependencies": dict(list(metadata.dependencies.items())[:20]),  # Limit for tokens
             "entry_points": metadata.entry_points,
             "key_files": metadata.key_files[:20],  # Limit for tokens
         }
+    except (OSError, ValueError) as e:
+        return {"error": f"Failed to extract metadata: {str(e)}"}
     except Exception as e:
+        logger.exception("Unexpected error in extract_metadata")
         return {"error": f"Failed to extract metadata: {str(e)}"}
 
 
 @tool
 def analyze_code(
-    repo_path: str, user_summary: str, metadata_dict: dict[str, Any], file_tree: dict[str, Any]
+    repo_path: str, user_summary: str, metadata_dict: dict[str, Any], file_list: list[str]
 ) -> dict[str, Any]:
-    """Analyze code using LLM to extract architectural insights.
-
-    This tool performs deep code analysis using an LLM to identify architecture
-    patterns, coding conventions, tech stack, and generate insights. This is
-    an expensive operation (LLM call). Call after extract_metadata.
+    """Analyze code using LLM for architectural insights. Expensive (LLM call).
 
     Args:
         repo_path: Absolute path to the repository root directory
         user_summary: User's description of what the project does
         metadata_dict: Output from extract_metadata tool
-        file_tree: Output from scan_structure tool (the 'tree' field)
+        file_list: List of file paths from scan_structure's file_list field
 
     Returns:
-        Dictionary containing:
-        - architecture_patterns: List of identified patterns (e.g., "MVC", "Microservices")
-        - coding_conventions: Dictionary of convention type -> description
-        - tech_stack: List of technologies and frameworks used
-        - insights: Additional insights about the codebase
-        - error: Error message if analysis failed
+        Dictionary with architecture_patterns, coding_conventions, tech_stack, insights, or error.
     """
     try:
         # Reconstruct ProjectMetadata from dict
@@ -134,9 +227,14 @@ def analyze_code(
             key_files=metadata_dict.get("key_files", []),
         )
 
+        # Build a simple tree dict from flat file list for the analyzer
+        tree = {"name": Path(repo_path).name, "type": "directory", "children": []}
+        for fp in file_list:
+            tree["children"].append({"name": fp, "type": "file"})
+
         llm = _get_llm_provider()
         analyzer = CodeAnalyzer(llm)
-        analysis = analyzer.analyze(Path(repo_path), metadata, file_tree, user_summary)
+        analysis = analyzer.analyze(Path(repo_path), metadata, tree, user_summary)
 
         return {
             "architecture_patterns": analysis.architecture_patterns,
@@ -144,7 +242,10 @@ def analyze_code(
             "tech_stack": analysis.tech_stack,
             "insights": analysis.insights,
         }
+    except (OSError, ValueError, RuntimeError) as e:
+        return {"error": f"Failed to analyze code: {str(e)}"}
     except Exception as e:
+        logger.exception("Unexpected error in analyze_code")
         return {"error": f"Failed to analyze code: {str(e)}"}
 
 
@@ -155,11 +256,7 @@ def generate_context(
     metadata_dict: dict[str, Any],
     analysis_dict: dict[str, Any],
 ) -> dict[str, Any]:
-    """Generate final context markdown file.
-
-    Synthesizes all gathered information (metadata + analysis) into a
-    comprehensive markdown context file with YAML frontmatter. This performs
-    an LLM call to generate the final documentation. Call after analyze_code.
+    """Generate final context markdown file. Expensive (LLM call). Call after analyze_code.
 
     Args:
         repo_path: Absolute path to the repository root directory
@@ -168,12 +265,11 @@ def generate_context(
         analysis_dict: Output from analyze_code tool
 
     Returns:
-        Dictionary containing:
-        - context_md: Generated markdown content (truncated preview)
-        - output_path: Path where context file was saved
-        - error: Error message if generation failed
+        Dictionary with context_md preview, output_path, or error.
     """
     try:
+        config = _get_config()
+
         # Reconstruct models from dicts
         metadata = ProjectMetadata(
             name=Path(repo_path).name,
@@ -192,7 +288,7 @@ def generate_context(
         )
 
         generator = _get_context_generator()
-        output_path = generator.generate(metadata, analysis, user_summary, _config.model_name)
+        output_path = generator.generate(metadata, analysis, user_summary, config.model_name)
 
         # Read generated content for confirmation
         content = output_path.read_text(encoding="utf-8")
@@ -201,27 +297,23 @@ def generate_context(
             "context_md": content[:500] + "..." if len(content) > 500 else content,
             "output_path": str(output_path),
         }
+    except (OSError, ValueError, RuntimeError) as e:
+        return {"error": f"Failed to generate context: {str(e)}"}
     except Exception as e:
+        logger.exception("Unexpected error in generate_context")
         return {"error": f"Failed to generate context: {str(e)}"}
 
 
 @tool
 def refine_context(context_file_path: str, refinement_request: str) -> dict[str, Any]:
-    """Refine an existing context file based on user feedback.
-
-    Updates an existing context markdown file with requested changes.
-    Performs an LLM call to intelligently update the content while
-    preserving structure and other information.
+    """Refine an existing context file. Expensive (LLM call).
 
     Args:
         context_file_path: Absolute path to the existing context.md file
         refinement_request: Description of what to change or add
 
     Returns:
-        Dictionary containing:
-        - updated_context: Preview of updated markdown content
-        - output_path: Path where updated context was saved
-        - error: Error message if refinement failed
+        Dictionary with updated_context preview, output_path, or error.
     """
     try:
         generator = _get_context_generator()
@@ -234,5 +326,8 @@ def refine_context(context_file_path: str, refinement_request: str) -> dict[str,
             "updated_context": content[:500] + "..." if len(content) > 500 else content,
             "output_path": str(updated_path),
         }
+    except (OSError, ValueError, RuntimeError) as e:
+        return {"error": f"Failed to refine context: {str(e)}"}
     except Exception as e:
+        logger.exception("Unexpected error in refine_context")
         return {"error": f"Failed to refine context: {str(e)}"}

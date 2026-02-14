@@ -19,6 +19,16 @@ class MockLLMProvider(LLMProvider):
         }
         return LLMResponse(content=json.dumps(mock_response), model="mock-model")
 
+    def generate_structured(self, prompt: str, system: str | None = None, schema=None):
+        """Return mock structured response."""
+        from agents.analyzer.code_analyzer import CodeAnalysisOutput
+        return CodeAnalysisOutput(
+            architecture_patterns=["Modular"],
+            tech_stack=["Python"],
+            coding_conventions={"style": "PEP8"},
+            insights="Well-structured Python project",
+        )
+
 
 def test_code_analyzer_basic(temp_repo, config):
     """Test code analyzer with mock LLM."""

@@ -43,3 +43,4 @@ htmlcov/
 # Generated contexts (keep the directory)
 contexts/*
 !contexts/.gitkeep
+output.log

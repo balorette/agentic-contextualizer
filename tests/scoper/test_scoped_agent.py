@@ -1,7 +1,9 @@
 """Tests for scoped context agent factory."""
 
 import pytest
+from pathlib import Path
 from unittest.mock import patch, MagicMock
+from src.agents.config import Config
 
 
 class TestCreateScopedAgent:
@@ -31,7 +33,7 @@ class TestCreateScopedAgent:
     @pytest.fixture
     def mock_llm(self):
         """Mock LLM provider."""
-        with patch("src.agents.scoper.agent.AnthropicProvider") as mock:
+        with patch("src.agents.scoper.agent.create_llm_provider") as mock:
             yield mock
 
     @pytest.fixture
@@ -44,8 +46,8 @@ class TestCreateScopedAgent:
 
     @pytest.fixture
     def mock_init_chat_model(self):
-        """Mock langchain init_chat_model."""
-        with patch("src.agents.scoper.agent.init_chat_model") as mock:
+        """Mock build_chat_model (replaces init_chat_model after refactor)."""
+        with patch("src.agents.llm.chat_model_factory.init_chat_model") as mock:
             yield mock
 
     def test_creates_agent_with_correct_tools(
@@ -152,6 +154,53 @@ class TestCreateScopedAgent:
         call_kwargs = mock_create_agent.call_args[1]
         assert call_kwargs["debug"] is True
 
+    def test_config_from_env_called_once(
+        self,
+        sample_repo,
+        mock_config,
+        mock_llm,
+        mock_create_agent,
+        mock_init_chat_model,
+    ):
+        """Generator LLM provider should use the same config as the agent model."""
+        from src.agents.scoper.agent import create_scoped_agent
+
+        create_scoped_agent(sample_repo)
+
+        calls = mock_config.from_env.call_count
+        assert calls == 1, f"Config.from_env() called {calls} times, expected 1"
+
+    def test_passes_tight_tool_limits(
+        self,
+        sample_repo,
+        mock_config,
+        mock_llm,
+        mock_create_agent,
+        mock_init_chat_model,
+    ):
+        """Test that agent factory passes tighter limits to tool factories."""
+        from src.agents.scoper.agent import create_scoped_agent
+
+        with patch("src.agents.scoper.agent.create_file_tools") as mock_file_tools, \
+             patch("src.agents.scoper.agent.create_search_tools") as mock_search_tools, \
+             patch("src.agents.scoper.agent.create_analysis_tools") as mock_analysis_tools:
+            mock_file_tools.return_value = []
+            mock_search_tools.return_value = []
+            mock_analysis_tools.return_value = []
+
+            create_scoped_agent(sample_repo)
+
+            # File tools should get tighter limits
+            mock_file_tools.assert_called_once()
+            ft_kwargs = mock_file_tools.call_args
+            assert ft_kwargs[1].get("max_chars") == 8000
+
+            # Search tools should get tighter limits
+            mock_search_tools.assert_called_once()
+            st_kwargs = mock_search_tools.call_args
+            assert st_kwargs[1].get("max_grep_results") == 15
+            assert st_kwargs[1].get("context_lines") == 1
+
 
 class TestCreateScopedAgentWithBudget:
     """Tests for create_scoped_agent_with_budget factory."""
@@ -239,3 +288,184 @@ class TestScopedAgentSystemPrompt:
 
         assert "Budget" in SCOPED_AGENT_SYSTEM_PROMPT
         assert "10-20" in SCOPED_AGENT_SYSTEM_PROMPT  # file read budget
+
+    def test_prompt_includes_token_economy(self):
+        """Test that system prompt includes token economy guidance."""
+        from src.agents.scoper.agent import SCOPED_AGENT_SYSTEM_PROMPT
+
+        assert "Token Economy" in SCOPED_AGENT_SYSTEM_PROMPT or "token" in SCOPED_AGENT_SYSTEM_PROMPT.lower()
+        # Should mention keeping results small
+        assert "max_results" in SCOPED_AGENT_SYSTEM_PROMPT
+
+
+class TestGenerateScopedContextTool:
+    """Tests for the generate_scoped_context tool signature and behavior."""
+
+    @pytest.fixture
+    def sample_repo(self, tmp_path):
+        """Create a sample repository with files."""
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        (repo / "src").mkdir()
+        (repo / "src" / "auth.py").write_text(
+            "def login(user, password):\n    return authenticate(user, password)\n"
+        )
+        (repo / "src" / "models.py").write_text(
+            "class User:\n    name: str\n    email: str\n"
+        )
+        return repo
+
+    @pytest.fixture
+    def mock_generator(self):
+        """Mock ScopedGenerator to avoid real LLM calls."""
+        with patch("src.agents.scoper.agent.ScopedGenerator") as mock_cls:
+            generator_instance = MagicMock()
+            generator_instance.generate.return_value = Path("/tmp/output.md")
+            mock_cls.return_value = generator_instance
+            yield generator_instance
+
+    @pytest.fixture
+    def mock_create_agent(self):
+        with patch("src.agents.scoper.agent.create_agent") as mock:
+            mock.return_value = MagicMock()
+            yield mock
+
+    @pytest.fixture
+    def mock_init_chat_model(self):
+        with patch("src.agents.llm.chat_model_factory.init_chat_model") as mock:
+            yield mock
+
+    def test_generate_tool_accepts_paths_not_contents(
+        self,
+        sample_repo,
+        mock_generator,
+        mock_create_agent,
+        mock_init_chat_model,
+    ):
+        """generate_scoped_context should accept file paths, not file contents."""
+        from src.agents.scoper.agent import create_scoped_agent
+
+        create_scoped_agent(sample_repo, config=Config(api_key="test"))
+
+        call_kwargs = mock_create_agent.call_args[1]
+        tools = call_kwargs["tools"]
+        gen_tool = next(t for t in tools if t.name == "generate_scoped_context")
+
+        # Check tool schema
+        schema = gen_tool.args_schema.model_json_schema()
+        props = schema["properties"]
+        assert "relevant_file_paths" in props, "Tool should accept relevant_file_paths"
+        assert "relevant_files" not in props, "Tool should NOT accept relevant_files dict"
+        assert props["relevant_file_paths"]["type"] == "array"
+
+    def test_generate_tool_reads_files_via_backend(
+        self,
+        sample_repo,
+        mock_generator,
+        mock_create_agent,
+        mock_init_chat_model,
+    ):
+        """Tool should read file contents from backend using the provided paths."""
+        from src.agents.scoper.agent import create_scoped_agent
+
+        create_scoped_agent(sample_repo, config=Config(api_key="test"))
+
+        call_kwargs = mock_create_agent.call_args[1]
+        tools = call_kwargs["tools"]
+        gen_tool = next(t for t in tools if t.name == "generate_scoped_context")
+
+        # Invoke the tool with file paths
+        result = gen_tool.invoke({
+            "question": "How does auth work?",
+            "relevant_file_paths": ["src/auth.py", "src/models.py"],
+            "insights": "Auth uses password-based login",
+        })
+
+        # Generator should have been called with actual file contents
+        mock_generator.generate.assert_called_once()
+        gen_call_kwargs = mock_generator.generate.call_args[1]
+        relevant_files = gen_call_kwargs["relevant_files"]
+        assert "src/auth.py" in relevant_files
+        assert "def login" in relevant_files["src/auth.py"]
+
+    def test_generate_tool_rejects_empty_paths(
+        self,
+        sample_repo,
+        mock_generator,
+        mock_create_agent,
+        mock_init_chat_model,
+    ):
+        """Tool should return an error when given an empty paths list."""
+        from src.agents.scoper.agent import create_scoped_agent
+        from src.agents.config import Config
+
+        create_scoped_agent(sample_repo, config=Config(api_key="test"))
+
+        call_kwargs = mock_create_agent.call_args[1]
+        tools = call_kwargs["tools"]
+        gen_tool = next(t for t in tools if t.name == "generate_scoped_context")
+
+        result = gen_tool.invoke({
+            "question": "How does auth work?",
+            "relevant_file_paths": [],
+            "insights": "Some insights",
+        })
+
+        assert result["output_path"] is None
+        assert "empty" in result["error"].lower()
+        mock_generator.generate.assert_not_called()
+
+    def test_generate_tool_skips_nonexistent_files(
+        self,
+        sample_repo,
+        mock_generator,
+        mock_create_agent,
+        mock_init_chat_model,
+    ):
+        """Tool should skip files that don't exist and still generate."""
+        from src.agents.scoper.agent import create_scoped_agent
+        from src.agents.config import Config
+
+        create_scoped_agent(sample_repo, config=Config(api_key="test"))
+
+        call_kwargs = mock_create_agent.call_args[1]
+        tools = call_kwargs["tools"]
+        gen_tool = next(t for t in tools if t.name == "generate_scoped_context")
+
+        result = gen_tool.invoke({
+            "question": "How does auth work?",
+            "relevant_file_paths": ["src/auth.py", "nonexistent.py"],
+            "insights": "Auth uses password-based login",
+        })
+
+        mock_generator.generate.assert_called_once()
+        gen_call_kwargs = mock_generator.generate.call_args[1]
+        assert "nonexistent.py" not in gen_call_kwargs["relevant_files"]
+        assert "src/auth.py" in gen_call_kwargs["relevant_files"]
+
+    def test_generate_tool_returns_error_on_exception(
+        self,
+        sample_repo,
+        mock_generator,
+        mock_create_agent,
+        mock_init_chat_model,
+    ):
+        """Tool should catch exceptions and return error dict."""
+        from src.agents.scoper.agent import create_scoped_agent
+        from src.agents.config import Config
+
+        create_scoped_agent(sample_repo, config=Config(api_key="test"))
+
+        call_kwargs = mock_create_agent.call_args[1]
+        tools = call_kwargs["tools"]
+        gen_tool = next(t for t in tools if t.name == "generate_scoped_context")
+
+        mock_generator.generate.side_effect = RuntimeError("LLM failed")
+        result = gen_tool.invoke({
+            "question": "How does auth work?",
+            "relevant_file_paths": ["src/auth.py"],
+            "insights": "Some insights",
+        })
+
+        assert result["output_path"] is None
+        assert "LLM failed" in result["error"]

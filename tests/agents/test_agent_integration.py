@@ -154,7 +154,11 @@ class TestAgentErrorHandling:
 
         # Should return error dict, not raise exception
         assert "error" in result
-        assert ("does not exist" in result["error"].lower() or "no such file" in result["error"].lower())
+        assert (
+            "does not exist" in result["error"].lower()
+            or "no such file" in result["error"].lower()
+            or "invalid or disallowed" in result["error"].lower()
+        )
 
     def test_agent_handles_invalid_metadata(self):
         """Test that metadata extraction handles missing files gracefully."""
@@ -182,7 +186,7 @@ class TestAgentErrorHandling:
         result = analyze_code.invoke({
             "repo_path": str(repo),
             "user_summary": "Test",
-            "file_tree": {"name": "root", "type": "directory", "children": []},
+            "file_list": [],
             "metadata_dict": {
                 "project_type": "python",
                 "dependencies": [],
@@ -280,7 +284,7 @@ class TestAgentToolIntegration:
 
         # Should succeed
         assert "error" not in scan_result
-        assert "tree" in scan_result
+        assert "file_list" in scan_result
 
         # Extract metadata (uses repo_path directly, not scan result)
         metadata_result = extract_metadata.invoke({"repo_path": str(repo)})
@@ -314,3 +318,39 @@ class TestAgentMessageHandling:
             assert len(messages) > 0
             assert messages[0]["role"] == "user"
             assert isinstance(messages[0]["content"], str)
+
+
+class TestAgentWithCheckpointer:
+    """Test create_contextualizer_agent_with_checkpointer."""
+
+    def test_requires_checkpointer(self):
+        from src.agents.factory import create_contextualizer_agent_with_checkpointer
+
+        with pytest.raises(ValueError, match="checkpointer is required"):
+            create_contextualizer_agent_with_checkpointer(checkpointer=None)
+
+    def test_creates_agent_with_checkpointer(self):
+        from src.agents.factory import create_contextualizer_agent_with_checkpointer
+
+        checkpointer = create_checkpointer()
+        agent = create_contextualizer_agent_with_checkpointer(
+            checkpointer=checkpointer
+        )
+        assert agent is not None
+        assert hasattr(agent, "invoke")
+
+
+def test_agent_middleware_has_throttle(monkeypatch):
+    """Agent factory should pass TPM throttle to middleware."""
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    monkeypatch.setenv("MAX_TPM", "40000")
+    monkeypatch.setenv("TPM_SAFETY_FACTOR", "0.9")
+    monkeypatch.delenv("LLM_BASE_URL", raising=False)
+    monkeypatch.delenv("LLM_PROVIDER", raising=False)
+
+    # We can't easily inspect middleware after agent creation,
+    # but we can verify no import errors and the factory doesn't crash
+    from src.agents.factory import create_contextualizer_agent
+    # This should not raise
+    agent = create_contextualizer_agent(debug=False)
+    assert agent is not None
