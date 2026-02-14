@@ -398,19 +398,31 @@ def _find_js_definition_end(lines: list[str], start_idx: int) -> int | None:
 # =============================================================================
 
 
-def create_search_tools(backend: FileBackend) -> list[BaseTool]:
+def create_search_tools(
+    backend: FileBackend,
+    max_grep_results: int = 50,
+    max_def_results: int = 50,
+    context_lines: int = 2,
+) -> list[BaseTool]:
     """Create code search tools bound to a specific backend.
 
     Args:
         backend: File backend to bind tools to
+        max_grep_results: Default max results for grep_in_files (default: 50)
+        max_def_results: Default max results for find_code_definitions (default: 50)
+        context_lines: Lines of context around grep matches (default: 2)
 
     Returns:
         List of LangChain tools ready for agent use
     """
 
+    _default_grep_max = max_grep_results
+    _default_def_max = max_def_results
+    _default_context_lines = context_lines
+
     @tool
     def grep_in_files(
-        pattern: str, path: str | None = None, max_results: int = 50
+        pattern: str, path: str | None = None, max_results: int = _default_grep_max
     ) -> dict:
         """Search for a regex pattern in repository files.
 
@@ -431,12 +443,12 @@ def create_search_tools(backend: FileBackend) -> list[BaseTool]:
             - files_searched: Number of files searched
             - error: Error message if search failed
         """
-        result = grep_pattern(backend, pattern, path, max_results)
+        result = grep_pattern(backend, pattern, path, max_results, _default_context_lines)
         return result.model_dump()
 
     @tool
     def find_code_definitions(
-        name: str, def_type: str | None = None, max_results: int = 50
+        name: str, def_type: str | None = None, max_results: int = _default_def_max
     ) -> dict:
         """Find function, class, method, or variable definitions by name.
 
