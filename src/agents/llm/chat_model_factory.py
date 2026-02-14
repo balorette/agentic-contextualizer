@@ -18,6 +18,7 @@ from .provider import _resolve_api_key_for_model, _strip_provider_prefix
 if TYPE_CHECKING:
     from .rate_limiting import TPMThrottle
     from ..middleware.token_budget import TokenBudgetMiddleware
+    from ..middleware.budget import BudgetTracker
 
 logger = logging.getLogger(__name__)
 
@@ -165,6 +166,7 @@ def build_token_middleware(
     config: Config,
     model_name: str,
     throttle: "TPMThrottle | None" = None,
+    budget_tracker: "BudgetTracker | None" = None,
 ) -> "TokenBudgetMiddleware":
     """Build a TokenBudgetMiddleware with TPM throttle from config.
 
@@ -173,6 +175,7 @@ def build_token_middleware(
         model_name: Model name for token estimation
         throttle: Optional shared TPMThrottle instance. If None, a new one
             is created from config values.
+        budget_tracker: Optional BudgetTracker for cumulative cost enforcement.
 
     Returns:
         Configured TokenBudgetMiddleware
@@ -191,4 +194,5 @@ def build_token_middleware(
         throttle=throttle,
         estimator=estimator,
         model_name=_strip_provider_prefix(model_name),
+        budget_tracker=budget_tracker,
     )
