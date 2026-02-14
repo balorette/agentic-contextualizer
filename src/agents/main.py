@@ -147,7 +147,11 @@ def _run_agent(agent, user_message: str, agent_config: dict, stream: bool, debug
                 {"messages": [{"role": "user", "content": user_message}]},
                 config=agent_config,
             )
-            final_message = result.get("messages", [])[-1]
+            messages = result.get("messages", [])
+            if not messages:
+                click.echo("\n⚠️ Agent returned no messages.", err=True)
+                return 1
+            final_message = messages[-1]
             output_content = (
                 final_message.content
                 if hasattr(final_message, "content")
@@ -188,7 +192,8 @@ def cli():
 @click.option("--model", help="Model name (e.g., gpt-4o, claude-3-5-sonnet-20241022)")
 @click.option("--debug", is_flag=True, help="Enable debug output for agent mode")
 @click.option("--stream", is_flag=True, help="Enable streaming output for agent mode (real-time feedback)")
-def generate(source: str, summary: str, output: str | None, mode: str, provider: str | None, model: str | None, debug: bool, stream: bool):
+@click.pass_context
+def generate(ctx, source: str, summary: str, output: str | None, mode: str, provider: str | None, model: str | None, debug: bool, stream: bool):
     """Generate context for a repository.
 
     SOURCE can be a local path or a GitHub URL.
@@ -208,25 +213,28 @@ def generate(source: str, summary: str, output: str | None, mode: str, provider:
     """
     config = _prepare_config(provider, model)
     if config is None:
-        return 1
+        ctx.exit(1)
+        return
 
     try:
         with resolve_repo(source) as repo:
             if mode == "agent":
-                return _generate_agent_mode(repo, summary, config, debug, stream)
+                rc = _generate_agent_mode(repo, summary, config, debug, stream)
             else:
-                return _generate_pipeline_mode(repo, summary, config)
+                rc = _generate_pipeline_mode(repo, summary, config)
+            if rc:
+                ctx.exit(rc)
     except subprocess.CalledProcessError as e:
         click.echo("Error: Failed to clone repository. Check the URL and your git credentials.", err=True)
         if debug:
             click.echo(f"Details: {e.stderr}", err=True)
-        return 1
+        ctx.exit(1)
     except subprocess.TimeoutExpired:
         click.echo("Error: Clone timed out. The repository may be too large or the network is slow.", err=True)
-        return 1
+        ctx.exit(1)
     except ValueError as e:
         click.echo(f"Error: {e}", err=True)
-        return 1
+        ctx.exit(1)
 
 
 def _generate_pipeline_mode(repo: Path, summary: str, config: Config) -> int:
@@ -269,7 +277,7 @@ def _generate_agent_mode(repo: Path, summary: str, config: Config, debug: bool, 
     from .factory import create_contextualizer_agent
     from .memory import create_checkpointer, create_agent_config
     from .observability import configure_tracing, is_tracing_enabled
-    from .tools.repository_tools import set_tool_config
+    from .tools.repository_tools import set_tool_config, set_allowed_repo_root
 
     click.echo(f"🤖 Agent mode: Analyzing repository: {repo}")
 
@@ -279,6 +287,7 @@ def _generate_agent_mode(repo: Path, summary: str, config: Config, debug: bool, 
     # Set tool config so tools use the same config as the agent
     # This ensures CLI flags propagate to tools
     set_tool_config(config)
+    set_allowed_repo_root(repo)
 
     # Configure tracing
     configure_tracing()
@@ -327,7 +336,8 @@ def _generate_agent_mode(repo: Path, summary: str, config: Config, debug: bool, 
 @click.option("--model", help="Model name (e.g., gpt-4o, claude-3-5-sonnet-20241022)")
 @click.option("--debug", is_flag=True, help="Enable debug output for agent mode")
 @click.option("--stream", is_flag=True, help="Enable streaming output for agent mode (real-time feedback)")
-def refine(context_file: str, request: str, mode: str, provider: str | None, model: str | None, debug: bool, stream: bool):
+@click.pass_context
+def refine(ctx, context_file: str, request: str, mode: str, provider: str | None, model: str | None, debug: bool, stream: bool):
     """Refine an existing context file.
 
     Examples:
@@ -343,12 +353,15 @@ def refine(context_file: str, request: str, mode: str, provider: str | None, mod
     context_path = Path(context_file)
     config = _prepare_config(provider, model)
     if config is None:
-        return 1
+        ctx.exit(1)
+        return
 
     if mode == "agent":
-        return _refine_agent_mode(context_path, request, config, debug, stream)
+        rc = _refine_agent_mode(context_path, request, config, debug, stream)
     else:
-        return _refine_pipeline_mode(context_path, request, config)
+        rc = _refine_pipeline_mode(context_path, request, config)
+    if rc:
+        ctx.exit(rc)
 
 
 def _refine_pipeline_mode(context_path: Path, request: str, config: Config) -> int:
@@ -369,7 +382,7 @@ def _refine_agent_mode(context_path: Path, request: str, config: Config, debug: 
     from .factory import create_contextualizer_agent
     from .memory import create_checkpointer, create_agent_config
     from .observability import configure_tracing, is_tracing_enabled
-    from .tools.repository_tools import set_tool_config
+    from .tools.repository_tools import set_tool_config, set_allowed_repo_root
 
     click.echo(f"🤖 Agent mode: Refining context: {context_path}")
 
@@ -379,9 +392,17 @@ def _refine_agent_mode(context_path: Path, request: str, config: Config, debug: 
     if stream:
         click.echo("   Streaming: Enabled")
 
-    # Try to infer repo path from context file location
-    # Context files are stored as contexts/{repo-name}/context.md
-    repo_path = context_path.parent.parent  # Go up two levels
+    # Try to get repo path from context file frontmatter, fall back to parent dir
+    source_repo = _extract_repo_from_context(context_path)
+    if source_repo and Path(source_repo).is_dir():
+        repo_path = Path(source_repo).resolve()
+    else:
+        # Fallback: context files are stored as contexts/{repo-name}/context.md
+        repo_path = context_path.parent
+
+    # Restrict tool file access to the repo being refined
+    if repo_path.is_dir():
+        set_allowed_repo_root(repo_path)
 
     # Configure tracing
     configure_tracing()
@@ -432,7 +453,8 @@ def _refine_agent_mode(context_path: Path, request: str, config: Config, debug: 
 @click.option("--model", help="Model name (e.g., gpt-4o, claude-3-5-sonnet-20241022)")
 @click.option("--debug", is_flag=True, help="Enable debug output")
 @click.option("--stream", is_flag=True, help="Enable streaming output (agent mode)")
-def scope(source: str, question: str, output: str | None, mode: str, provider: str | None, model: str | None, debug: bool, stream: bool):
+@click.pass_context
+def scope(ctx, source: str, question: str, output: str | None, mode: str, provider: str | None, model: str | None, debug: bool, stream: bool):
     """Generate scoped context for a specific question.
 
     SOURCE can be:
@@ -455,35 +477,41 @@ def scope(source: str, question: str, output: str | None, mode: str, provider: s
     """
     config = _prepare_config(provider, model)
     if config is None:
-        return 1
+        ctx.exit(1)
+        return
 
     # Context files are handled directly (no resolve_repo needed)
     source_path = Path(source)
     if source_path.is_file() and source_path.suffix == ".md":
         source_path = source_path.resolve()
         if mode == "agent":
-            return _scope_agent_mode(source_path, question, config, True, debug, stream)
+            rc = _scope_agent_mode(source_path, question, config, True, debug, stream)
         else:
-            return _scope_pipeline_mode(source_path, question, config, True, output)
+            rc = _scope_pipeline_mode(source_path, question, config, True, output)
+        if rc:
+            ctx.exit(rc)
+        return
 
     # Repo path or GitHub URL - resolve it
     try:
         with resolve_repo(source) as repo:
             if mode == "agent":
-                return _scope_agent_mode(repo, question, config, False, debug, stream)
+                rc = _scope_agent_mode(repo, question, config, False, debug, stream)
             else:
-                return _scope_pipeline_mode(repo, question, config, False, output)
+                rc = _scope_pipeline_mode(repo, question, config, False, output)
+            if rc:
+                ctx.exit(rc)
     except subprocess.CalledProcessError as e:
         click.echo("Error: Failed to clone repository. Check the URL and your git credentials.", err=True)
         if debug:
             click.echo(f"Details: {e.stderr}", err=True)
-        return 1
+        ctx.exit(1)
     except subprocess.TimeoutExpired:
         click.echo("Error: Clone timed out. The repository may be too large or the network is slow.", err=True)
-        return 1
+        ctx.exit(1)
     except ValueError as e:
         click.echo(f"Error: {e}", err=True)
-        return 1
+        ctx.exit(1)
 
 
 def _scope_pipeline_mode(
@@ -587,7 +615,7 @@ def _scope_agent_mode(
     """Generate scoped context using agent mode with dedicated scoped agent."""
     from .scoper import create_scoped_agent
     from .memory import create_checkpointer, create_agent_config
-    from .tools.repository_tools import set_tool_config
+    from .tools.repository_tools import set_tool_config, set_allowed_repo_root
 
     # Set tool config for consistency
     set_tool_config(config)
@@ -609,6 +637,10 @@ def _scope_agent_mode(
         click.echo(f"   Repository: {repo_path}")
     else:
         repo_path = source_path
+
+    # Restrict tool file access to the target repo
+    if repo_path.is_dir():
+        set_allowed_repo_root(repo_path)
 
     # Configure tracing
     configure_tracing()

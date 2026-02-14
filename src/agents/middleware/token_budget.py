@@ -90,9 +90,11 @@ class TokenBudgetMiddleware(AgentMiddleware):
             elif isinstance(content, (dict, list)):
                 serialized = json.dumps(content)
                 if len(serialized) > self.max_tool_output_chars:
+                    # Truncate as a plain string with a clear marker so
+                    # downstream code doesn't try to parse broken JSON.
                     result.content = (
-                        serialized[: self.max_tool_output_chars]
-                        + f"\n... [truncated, {len(serialized) - self.max_tool_output_chars} chars omitted]"
+                        f"[truncated tool output — {len(serialized)} chars, limit {self.max_tool_output_chars}]\n"
+                        + serialized[: self.max_tool_output_chars]
                     )
 
         return result

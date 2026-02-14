@@ -17,6 +17,7 @@ from ..llm.provider import LLMProvider, create_llm_provider
 from ..models import ProjectMetadata, CodeAnalysis
 
 _tool_config: ContextVar[Config | None] = ContextVar('tool_config', default=None)
+_allowed_repo_root: ContextVar[Path | None] = ContextVar('allowed_repo_root', default=None)
 
 # Lazily initialized fallback (was import-time; now deferred)
 _default_config: Config | None = None
@@ -29,6 +30,34 @@ _cached_provider_config_id: int | None = None
 def set_tool_config(config: Config) -> None:
     """Set the config to be used by tools in this context."""
     _tool_config.set(config)
+
+
+def set_allowed_repo_root(repo_path: Path) -> None:
+    """Set the allowed repository root for path traversal protection.
+
+    Must be called before agent execution so that tools can validate
+    that LLM-supplied paths stay within the target repository.
+    """
+    _allowed_repo_root.set(repo_path.resolve())
+
+
+def _validate_repo_path(repo_path: str) -> Path | None:
+    """Validate that repo_path is within the allowed root.
+
+    Returns the resolved Path if valid, or None if the path
+    escapes the allowed boundary (or no boundary is set and the
+    path doesn't exist as a directory).
+    """
+    resolved = Path(repo_path).resolve()
+    allowed = _allowed_repo_root.get(None)
+    if allowed is not None:
+        try:
+            resolved.relative_to(allowed)
+        except ValueError:
+            return None
+    if not resolved.is_dir():
+        return None
+    return resolved
 
 
 def _get_config() -> Config:
@@ -121,9 +150,12 @@ def scan_structure(repo_path: str) -> dict[str, Any]:
         Dictionary with file_list, total_files, total_dirs, or error.
     """
     try:
+        validated = _validate_repo_path(repo_path)
+        if validated is None:
+            return {"error": f"Invalid or disallowed repository path: {repo_path}"}
         config = _get_config()
         scanner = _get_scanner()
-        result = scanner.scan(Path(repo_path))
+        result = scanner.scan(validated)
         # Flatten tree to compact list of relative paths (saves ~80% tokens vs nested JSON)
         flat_files = _flatten_tree(result["tree"])
         limit = config.max_scan_files
@@ -150,9 +182,12 @@ def extract_metadata(repo_path: str) -> dict[str, Any]:
         Dictionary with project_type, dependencies, entry_points, key_files, or error.
     """
     try:
+        validated = _validate_repo_path(repo_path)
+        if validated is None:
+            return {"error": f"Invalid or disallowed repository path: {repo_path}"}
         # MetadataExtractor is stateless, can be instantiated per call
         extractor = MetadataExtractor()
-        metadata = extractor.extract(Path(repo_path))
+        metadata = extractor.extract(validated)
         return {
             "project_type": metadata.project_type,
             "dependencies": dict(list(metadata.dependencies.items())[:20]),  # Limit for tokens

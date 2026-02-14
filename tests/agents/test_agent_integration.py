@@ -154,7 +154,11 @@ class TestAgentErrorHandling:
 
         # Should return error dict, not raise exception
         assert "error" in result
-        assert ("does not exist" in result["error"].lower() or "no such file" in result["error"].lower())
+        assert (
+            "does not exist" in result["error"].lower()
+            or "no such file" in result["error"].lower()
+            or "invalid or disallowed" in result["error"].lower()
+        )
 
     def test_agent_handles_invalid_metadata(self):
         """Test that metadata extraction handles missing files gracefully."""

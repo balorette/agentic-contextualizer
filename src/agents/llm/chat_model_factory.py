@@ -6,6 +6,7 @@ into a single authoritative location.
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING
 
 from langchain.chat_models import init_chat_model
@@ -16,6 +17,8 @@ from .provider import _resolve_api_key_for_model
 
 if TYPE_CHECKING:
     from ..middleware.token_budget import TokenBudgetMiddleware
+
+logger = logging.getLogger(__name__)
 
 
 def _format_model_name_for_langchain(model_name: str) -> str:
@@ -70,11 +73,11 @@ def build_chat_model(
         api_key = _resolve_api_key_for_model(model_name, config)
 
     if debug:
-        print(f"[DEBUG] Creating LangChain model:")
-        print(f"  - Original model_name: {model_name}")
-        print(f"  - Using LiteLLM: {should_use_litellm}")
-        print(f"  - base_url: {base_url or 'None'}")
-        print(f"  - api_key: {'***' + api_key[-4:] if api_key else 'None'}")
+        logger.debug("Creating LangChain model:")
+        logger.debug("  - Original model_name: %s", model_name)
+        logger.debug("  - Using LiteLLM: %s", should_use_litellm)
+        logger.debug("  - base_url: %s", base_url or "None")
+        logger.debug("  - api_key: %s", "set" if api_key else "None")
 
     if should_use_litellm:
         return _build_litellm_model(config, model_name, base_url, api_key, debug)
@@ -93,8 +96,8 @@ def _build_litellm_model(
     from langchain_litellm import ChatLiteLLM
 
     if debug:
-        import os
-        os.environ["LITELLM_LOG"] = "DEBUG"
+        import litellm
+        litellm.set_verbose = True
 
     litellm_kwargs: dict = {
         "model": model_name,
@@ -113,17 +116,16 @@ def _build_litellm_model(
         litellm_kwargs["max_tokens"] = config.max_output_tokens
 
     if debug:
-        print(f"  - ChatLiteLLM kwargs:")
-        for k, v in litellm_kwargs.items():
-            if k == "api_key":
-                print(f"      {k}: ***{v[-4:] if v else 'None'}")
-            else:
-                print(f"      {k}: {v}")
+        safe_kwargs = {
+            k: ("set" if k == "api_key" else v)
+            for k, v in litellm_kwargs.items()
+        }
+        logger.debug("  - ChatLiteLLM kwargs: %s", safe_kwargs)
 
     model = ChatLiteLLM(**litellm_kwargs)
 
     if debug:
-        print(f"  - Created ChatLiteLLM successfully")
+        logger.debug("  - Created ChatLiteLLM successfully")
 
     return model
 
@@ -144,7 +146,7 @@ def _build_standard_model(
         model_kwargs["api_key"] = api_key
 
     if debug:
-        print(f"  - Formatted model_name: {formatted_model_name}")
+        logger.debug("  - Formatted model_name: %s", formatted_model_name)
 
     try:
         return init_chat_model(formatted_model_name, **model_kwargs)

@@ -268,7 +268,7 @@ class RateLimitedProvider(LLMProvider):
         # Record actual usage; fall back to estimate for structured responses
         # (Pydantic models don't carry tokens_used)
         tokens_used = getattr(result, "tokens_used", None)
-        if tokens_used:
+        if tokens_used is not None:
             self.throttle.record_usage(tokens_used)
         else:
             self.throttle.record_usage(estimated)

@@ -78,7 +78,7 @@ class TestScanStructure:
 
         # Assert
         assert "error" in result
-        assert "Failed to scan repository" in result["error"]
+        assert "Invalid or disallowed" in result["error"] or "Failed to scan" in result["error"]
 
     def test_scan_structure_idempotent(self, tmp_path):
         """Test that calling scan_structure multiple times returns same result."""

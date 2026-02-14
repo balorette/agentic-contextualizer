@@ -5,6 +5,7 @@ from typing import Any
 from langchain_core.tools import tool
 
 from .file import KEY_FILE_PATTERNS
+from .repository_tools import _allowed_repo_root
 
 
 @tool
@@ -55,7 +56,15 @@ def read_file_snippet(file_path: str, start_line: int = 0, num_lines: int = 50) 
         Dictionary with content, start_line, end_line, total_lines, file_path, or error.
     """
     try:
-        path = Path(file_path)
+        path = Path(file_path).resolve()
+
+        # Path traversal protection: ensure file is within allowed repo root
+        allowed_root = _allowed_repo_root.get(None)
+        if allowed_root is not None:
+            try:
+                path.relative_to(allowed_root)
+            except ValueError:
+                return {"error": f"Access denied: path is outside the allowed repository"}
 
         # Validate file exists
         if not path.exists():
