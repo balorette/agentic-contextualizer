@@ -1,7 +1,9 @@
 """Tests for scoped context agent factory."""
 
 import pytest
+from pathlib import Path
 from unittest.mock import patch, MagicMock
+from src.agents.config import Config
 
 
 class TestCreateScopedAgent:
@@ -255,3 +257,94 @@ class TestScopedAgentSystemPrompt:
 
         assert "Budget" in SCOPED_AGENT_SYSTEM_PROMPT
         assert "10-20" in SCOPED_AGENT_SYSTEM_PROMPT  # file read budget
+
+
+class TestGenerateScopedContextTool:
+    """Tests for the generate_scoped_context tool signature and behavior."""
+
+    @pytest.fixture
+    def sample_repo(self, tmp_path):
+        """Create a sample repository with files."""
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        (repo / "src").mkdir()
+        (repo / "src" / "auth.py").write_text(
+            "def login(user, password):\n    return authenticate(user, password)\n"
+        )
+        (repo / "src" / "models.py").write_text(
+            "class User:\n    name: str\n    email: str\n"
+        )
+        return repo
+
+    @pytest.fixture
+    def mock_generator(self):
+        """Mock ScopedGenerator to avoid real LLM calls."""
+        with patch("src.agents.scoper.agent.ScopedGenerator") as mock_cls:
+            generator_instance = MagicMock()
+            generator_instance.generate.return_value = Path("/tmp/output.md")
+            mock_cls.return_value = generator_instance
+            yield generator_instance
+
+    @pytest.fixture
+    def mock_create_agent(self):
+        with patch("src.agents.scoper.agent.create_agent") as mock:
+            mock.return_value = MagicMock()
+            yield mock
+
+    @pytest.fixture
+    def mock_init_chat_model(self):
+        with patch("src.agents.llm.chat_model_factory.init_chat_model") as mock:
+            yield mock
+
+    def test_generate_tool_accepts_paths_not_contents(
+        self,
+        sample_repo,
+        mock_generator,
+        mock_create_agent,
+        mock_init_chat_model,
+    ):
+        """generate_scoped_context should accept file paths, not file contents."""
+        from src.agents.scoper.agent import create_scoped_agent
+
+        create_scoped_agent(sample_repo, config=Config(api_key="test"))
+
+        call_kwargs = mock_create_agent.call_args[1]
+        tools = call_kwargs["tools"]
+        gen_tool = next(t for t in tools if t.name == "generate_scoped_context")
+
+        # Check tool schema
+        schema = gen_tool.args_schema.model_json_schema()
+        props = schema["properties"]
+        assert "relevant_file_paths" in props, "Tool should accept relevant_file_paths"
+        assert "relevant_files" not in props, "Tool should NOT accept relevant_files dict"
+        assert props["relevant_file_paths"]["type"] == "array"
+
+    def test_generate_tool_reads_files_via_backend(
+        self,
+        sample_repo,
+        mock_generator,
+        mock_create_agent,
+        mock_init_chat_model,
+    ):
+        """Tool should read file contents from backend using the provided paths."""
+        from src.agents.scoper.agent import create_scoped_agent
+
+        create_scoped_agent(sample_repo, config=Config(api_key="test"))
+
+        call_kwargs = mock_create_agent.call_args[1]
+        tools = call_kwargs["tools"]
+        gen_tool = next(t for t in tools if t.name == "generate_scoped_context")
+
+        # Invoke the tool with file paths
+        result = gen_tool.invoke({
+            "question": "How does auth work?",
+            "relevant_file_paths": ["src/auth.py", "src/models.py"],
+            "insights": "Auth uses password-based login",
+        })
+
+        # Generator should have been called with actual file contents
+        mock_generator.generate.assert_called_once()
+        gen_call_kwargs = mock_generator.generate.call_args[1]
+        relevant_files = gen_call_kwargs["relevant_files"]
+        assert "src/auth.py" in relevant_files
+        assert "def login" in relevant_files["src/auth.py"]

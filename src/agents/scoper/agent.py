@@ -34,7 +34,7 @@ You have access to the following tools:
 5. **extract_file_imports** - Parse imports from Python/JS/TS files to find related code
 
 ### Output Generation
-6. **generate_scoped_context** - Generate the final scoped context markdown file
+6. **generate_scoped_context** - Generate the final scoped context markdown file (pass file paths, not contents)
 
 ## Workflow Strategy
 
@@ -58,7 +58,10 @@ Follow this exploration strategy:
 - Use grep to find usages of key functions
 
 ### Step 4: Generate
-When you have sufficient context (typically 5-15 relevant files), use `generate_scoped_context` to produce the final documentation. **Include code references** with specific line numbers.
+When you have sufficient context (typically 5-15 relevant files), use `generate_scoped_context` with:
+- The list of **file paths** you found relevant (the tool reads contents automatically)
+- Your analysis and insights
+- Code references with specific line numbers
 
 ## Guidelines
 
@@ -68,6 +71,7 @@ When you have sufficient context (typically 5-15 relevant files), use `generate_
 - **Imports**: Following imports reveals architecture
 - **Line Numbers**: Track and report specific line numbers for key code
 - **Confidence**: Generate output when you can answer the question, not when you've read everything
+- **File Paths**: When calling generate_scoped_context, pass file paths — NOT file contents. The tool reads files automatically.
 
 ## Output Format
 
@@ -171,18 +175,18 @@ def create_scoped_agent(
     @tool
     def generate_scoped_context(
         question: str,
-        relevant_files: dict[str, str],
+        relevant_file_paths: list[str],
         insights: str,
         code_references: list[dict] | None = None,
     ) -> dict:
         """Generate the final scoped context markdown file.
 
         Call this when you have gathered sufficient context to answer the question.
-        This will create a markdown file with focused documentation.
+        Pass the PATHS of relevant files — the tool reads their contents automatically.
 
         Args:
             question: The original scope question being answered
-            relevant_files: Dictionary mapping file paths to their content
+            relevant_file_paths: List of file paths the agent determined are relevant
             insights: Your analysis and insights about the code
             code_references: Optional list of code reference dicts with keys:
                 - path: File path
@@ -196,6 +200,13 @@ def create_scoped_agent(
             - error: Error message if generation failed
         """
         try:
+            # Read file contents via backend
+            relevant_files = {}
+            for file_path in relevant_file_paths:
+                content = backend.read_file(file_path)
+                if content is not None:
+                    relevant_files[file_path] = content
+
             # Convert code reference dicts to CodeReference objects
             refs = None
             if code_references:
