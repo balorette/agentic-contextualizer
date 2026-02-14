@@ -42,8 +42,8 @@ class Config(BaseModel):
     retry_initial_wait: float = Field(default=2.0)
 
     # Token Budget
-    max_output_tokens: Optional[int] = Field(default=4096)
-    max_input_tokens: Optional[int] = Field(default=None)
+    max_output_tokens: Optional[int] = Field(default=16384)
+    max_input_tokens: Optional[int] = Field(default=128_000)
     max_tool_output_chars: int = Field(default=12000)
     max_scan_files: int = Field(default=200)
 
@@ -116,8 +116,8 @@ class Config(BaseModel):
             "max_tokens_per_call": _parse_int(os.getenv("MAX_TOKENS_PER_CALL"), None) if os.getenv("MAX_TOKENS_PER_CALL") else None,
             "retry_max_attempts": _parse_int(os.getenv("RETRY_MAX_ATTEMPTS"), 3),
             "retry_initial_wait": _parse_float(os.getenv("RETRY_INITIAL_WAIT"), 2.0),
-            "max_output_tokens": _parse_int(os.getenv("LLM_MAX_OUTPUT_TOKENS"), 4096),
-            "max_input_tokens": _parse_int(os.getenv("LLM_MAX_INPUT_TOKENS"), None) if os.getenv("LLM_MAX_INPUT_TOKENS") else None,
+            "max_output_tokens": _parse_int(os.getenv("LLM_MAX_OUTPUT_TOKENS"), 16384),
+            "max_input_tokens": _parse_int(os.getenv("LLM_MAX_INPUT_TOKENS"), 128_000) if os.getenv("LLM_MAX_INPUT_TOKENS") else 128_000,
             "max_tool_output_chars": _parse_int(os.getenv("MAX_TOOL_OUTPUT_CHARS"), 12000),
             "max_scan_files": _parse_int(os.getenv("MAX_SCAN_FILES"), 200),
             "max_file_size": _parse_int(os.getenv("MAX_FILE_SIZE"), 1_000_000),

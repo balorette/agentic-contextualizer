@@ -90,6 +90,25 @@ def test_config_tpm_from_env(monkeypatch):
     assert config.retry_initial_wait == 1.5
 
 
+def test_config_default_max_input_tokens():
+    """max_input_tokens should default to 128000 to enable message trimming."""
+    config = Config(api_key="test")
+    assert config.max_input_tokens == 128_000
+
+
+def test_config_default_max_output_tokens():
+    """max_output_tokens should default to 16384 for complex tool call args."""
+    config = Config(api_key="test")
+    assert config.max_output_tokens == 16384
+
+
+def test_config_max_input_tokens_from_env(monkeypatch):
+    """LLM_MAX_INPUT_TOKENS env var should override default."""
+    monkeypatch.setenv("LLM_MAX_INPUT_TOKENS", "64000")
+    config = Config.from_env()
+    assert config.max_input_tokens == 64000
+
+
 def test_default_ignored_dirs_is_frozenset():
     """DEFAULT_IGNORED_DIRS should be a frozenset for O(1) lookup."""
     assert isinstance(DEFAULT_IGNORED_DIRS, frozenset)
