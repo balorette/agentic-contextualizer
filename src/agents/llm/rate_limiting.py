@@ -188,7 +188,8 @@ class RetryHandler:
                 except ValueError:
                     # Unparseable timestamp — leave reset_at as None rather
                     # than failing the entire rate-limit info extraction.
-                    pass
+                    # If the provider sends an invalid timestamp, ignore it but keep other rate limit info.
+                    logger.debug("Failed to parse rate limit reset time from header: %r", reset_str)
             return RateLimitInfo(
                 input_tokens_remaining=int(
                     headers["anthropic-ratelimit-input-tokens-remaining"]
