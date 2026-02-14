@@ -16,6 +16,7 @@ from ..config import Config
 from .provider import _resolve_api_key_for_model, _strip_provider_prefix
 
 if TYPE_CHECKING:
+    from .rate_limiting import TPMThrottle
     from ..middleware.token_budget import TokenBudgetMiddleware
 
 logger = logging.getLogger(__name__)
@@ -163,12 +164,15 @@ def _build_standard_model(
 def build_token_middleware(
     config: Config,
     model_name: str,
+    throttle: "TPMThrottle | None" = None,
 ) -> "TokenBudgetMiddleware":
     """Build a TokenBudgetMiddleware with TPM throttle from config.
 
     Args:
         config: Application configuration
         model_name: Model name for token estimation
+        throttle: Optional shared TPMThrottle instance. If None, a new one
+            is created from config values.
 
     Returns:
         Configured TokenBudgetMiddleware
@@ -177,7 +181,8 @@ def build_token_middleware(
     from .token_estimator import LiteLLMTokenEstimator
     from ..middleware.token_budget import TokenBudgetMiddleware
 
-    throttle = TPMThrottle(config.max_tpm, config.tpm_safety_factor)
+    if throttle is None:
+        throttle = TPMThrottle(config.max_tpm, config.tpm_safety_factor)
     estimator = LiteLLMTokenEstimator()
 
     return TokenBudgetMiddleware(

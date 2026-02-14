@@ -9,6 +9,7 @@ from langchain_core.rate_limiters import InMemoryRateLimiter
 
 if TYPE_CHECKING:
     from ..config import Config
+    from .rate_limiting import TPMThrottle
 
 
 class LLMResponse(BaseModel):
@@ -210,7 +211,7 @@ def _resolve_api_key_for_model(model_name: str, config: "Config") -> Optional[st
         )
 
 
-def create_llm_provider(config: "Config") -> LLMProvider:
+def create_llm_provider(config: "Config", throttle: "TPMThrottle | None" = None) -> LLMProvider:
     """Factory function to create the appropriate LLM provider.
 
     Returns a RateLimitedProvider wrapping the inner provider with
@@ -218,6 +219,8 @@ def create_llm_provider(config: "Config") -> LLMProvider:
 
     Args:
         config: Application configuration
+        throttle: Optional shared TPMThrottle instance. If None, a new one
+            is created from config values.
 
     Returns:
         RateLimitedProvider wrapping AnthropicProvider or LiteLLMProvider
@@ -247,9 +250,12 @@ def create_llm_provider(config: "Config") -> LLMProvider:
             timeout=config.timeout,
         )
 
+    if throttle is None:
+        throttle = TPMThrottle(config.max_tpm, config.tpm_safety_factor)
+
     return RateLimitedProvider(
         provider=inner,
-        throttle=TPMThrottle(config.max_tpm, config.tpm_safety_factor),
+        throttle=throttle,
         estimator=LiteLLMTokenEstimator(),
         retry_handler=RetryHandler(config.retry_max_attempts, config.retry_initial_wait),
         max_tokens_per_call=config.max_tokens_per_call,

@@ -143,6 +143,7 @@ def create_scoped_agent(
         use_litellm = True
 
     from ..llm.chat_model_factory import build_chat_model, build_token_middleware
+    from ..llm.rate_limiting import TPMThrottle
 
     model = build_chat_model(
         config=config,
@@ -153,6 +154,10 @@ def create_scoped_agent(
         debug=debug,
     )
 
+    # Create shared throttle instance so agent loop and generation LLM
+    # are aware of each other's token usage
+    throttle = TPMThrottle(config.max_tpm, config.tpm_safety_factor)
+
     # Create file, analysis, and code search tools bound to backend
     file_tools = create_file_tools(backend)
     analysis_tools = create_analysis_tools(backend)
@@ -160,7 +165,7 @@ def create_scoped_agent(
 
     # Create the generation tool (needs LLM and output config)
     # Reuse the config from above to ensure consistent credentials
-    llm_provider = create_llm_provider(config)
+    llm_provider = create_llm_provider(config, throttle=throttle)
     generator = ScopedGenerator(llm_provider, output_dir)
 
     @tool
@@ -226,7 +231,7 @@ def create_scoped_agent(
     # Combine all tools
     tools = file_tools + analysis_tools + code_search_tools + [generate_scoped_context]
 
-    budget_mw = build_token_middleware(config, model_name)
+    budget_mw = build_token_middleware(config, model_name, throttle=throttle)
 
     # Create agent
     agent = create_agent(

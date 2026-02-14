@@ -147,6 +147,18 @@ class TestBuildTokenMiddleware:
         # Middleware should be created without error
         assert mw is not None
 
+    def test_build_token_middleware_accepts_shared_throttle(self):
+        """Should use provided throttle instead of creating a new one."""
+        from src.agents.llm.chat_model_factory import build_token_middleware
+        from src.agents.llm.rate_limiting import TPMThrottle
+        from src.agents.config import Config
+
+        shared_throttle = TPMThrottle(max_tpm=50000, safety_factor=0.9)
+        config = Config()
+        mw = build_token_middleware(config, "test-model", throttle=shared_throttle)
+
+        assert mw.throttle is shared_throttle
+
     def test_build_token_middleware_strips_provider_prefix(self):
         """Token estimator should receive model name without provider prefix.
 

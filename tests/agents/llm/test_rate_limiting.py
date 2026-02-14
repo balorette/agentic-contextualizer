@@ -159,6 +159,20 @@ class TestRetryHandler:
         assert info is None
 
 
+def test_create_llm_provider_accepts_shared_throttle():
+    """create_llm_provider should use provided throttle when given."""
+    from src.agents.llm.provider import create_llm_provider
+    from src.agents.llm.rate_limiting import TPMThrottle, RateLimitedProvider
+    from src.agents.config import Config
+
+    shared_throttle = TPMThrottle(max_tpm=50000, safety_factor=0.9)
+    config = Config(api_key="test-key", anthropic_api_key="test-key")
+    provider = create_llm_provider(config, throttle=shared_throttle)
+
+    assert isinstance(provider, RateLimitedProvider)
+    assert provider.throttle is shared_throttle
+
+
 from agents.llm.rate_limiting import RateLimitedProvider, TokenBudgetExceededError
 from agents.llm.provider import LLMResponse
 
