@@ -236,18 +236,27 @@ def list_key_files(file_tree: dict[str, Any]) -> dict[str, list[str]]:
 # =============================================================================
 
 
-def create_file_tools(backend: FileBackend) -> list[BaseTool]:
+def create_file_tools(
+    backend: FileBackend,
+    max_chars: int = DEFAULT_MAX_CHARS,
+    max_search_results: int = 30,
+) -> list[BaseTool]:
     """Create file tools bound to a specific backend.
 
     Args:
         backend: File backend to bind tools to
+        max_chars: Maximum characters for read_file (default: 13500)
+        max_search_results: Maximum results for search_for_files (default: 30)
 
     Returns:
         List of LangChain tools ready for agent use
     """
 
+    _default_max_chars = max_chars
+    _default_max_search = max_search_results
+
     @tool
-    def read_file(file_path: str, max_chars: int = DEFAULT_MAX_CHARS) -> dict:
+    def read_file(file_path: str, max_chars: int = _default_max_chars) -> dict:
         """Read a file from the repository.
 
         Use this to examine files you've identified as potentially relevant.
@@ -269,7 +278,7 @@ def create_file_tools(backend: FileBackend) -> list[BaseTool]:
         return result.model_dump()
 
     @tool
-    def search_for_files(keywords: list[str], max_results: int = 30) -> dict:
+    def search_for_files(keywords: list[str], max_results: int = _default_max_search) -> dict:
         """Search for files matching keywords in the repository.
 
         Use this as your first step to find candidate files.
