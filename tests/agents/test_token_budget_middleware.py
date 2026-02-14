@@ -190,3 +190,71 @@ class TestTokenBudgetMiddlewareAfterModel:
 
         # Should not raise
         mw.after_model(state, runtime=None)
+
+
+class TestTokenBudgetMiddlewareRoundTrip:
+    """Integration test: before_model + after_model across multiple turns."""
+
+    def test_multiple_turns_accumulate_in_throttle_and_tracker(self):
+        """Simulate 3 agent turns and verify cumulative tracking."""
+        throttle = TPMThrottle(max_tpm=100000, safety_factor=1.0)
+        tracker = BudgetTracker(max_tokens=50000)
+        estimator = FakeEstimator(value=500)
+        mw = TokenBudgetMiddleware(
+            throttle=throttle,
+            estimator=estimator,
+            model_name="test-model",
+            budget_tracker=tracker,
+        )
+
+        # Turn 1: 200 tokens
+        state1 = {"messages": [{"role": "user", "content": "turn 1"}]}
+        mw.before_model(state1, runtime=None)
+        ai1 = AIMessage(
+            content="resp 1",
+            usage_metadata={"input_tokens": 150, "output_tokens": 50, "total_tokens": 200},
+        )
+        mw.after_model({"messages": [HumanMessage(content="turn 1"), ai1]}, runtime=None)
+
+        # Turn 2: 400 tokens
+        state2 = {"messages": [
+            HumanMessage(content="turn 1"), ai1,
+            HumanMessage(content="turn 2"),
+        ]}
+        mw.before_model(state2, runtime=None)
+        ai2 = AIMessage(
+            content="resp 2",
+            usage_metadata={"input_tokens": 300, "output_tokens": 100, "total_tokens": 400},
+        )
+        mw.after_model(
+            {"messages": [HumanMessage(content="turn 1"), ai1, HumanMessage(content="turn 2"), ai2]},
+            runtime=None,
+        )
+
+        # Turn 3: 600 tokens
+        state3 = {"messages": [
+            HumanMessage(content="turn 1"), ai1,
+            HumanMessage(content="turn 2"), ai2,
+            HumanMessage(content="turn 3"),
+        ]}
+        mw.before_model(state3, runtime=None)
+        ai3 = AIMessage(
+            content="resp 3",
+            usage_metadata={"input_tokens": 450, "output_tokens": 150, "total_tokens": 600},
+        )
+        mw.after_model(
+            {"messages": [
+                HumanMessage(content="turn 1"), ai1,
+                HumanMessage(content="turn 2"), ai2,
+                HumanMessage(content="turn 3"), ai3,
+            ]},
+            runtime=None,
+        )
+
+        # Throttle: 200 + 400 + 600 = 1200
+        assert throttle.current_usage == 1200
+
+        # Tracker: same total
+        assert tracker.total_tokens == 1200
+        assert tracker.total_prompt_tokens == 900  # 150 + 300 + 450
+        assert tracker.total_completion_tokens == 300  # 50 + 100 + 150
