@@ -1,11 +1,16 @@
 """LLM-guided exploration for scoped context generation."""
 
+from __future__ import annotations
+
 from pathlib import Path
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any, Optional, TYPE_CHECKING
 from pydantic import BaseModel, Field
 from ..llm.provider import LLMProvider
 from ..llm.prompts import SCOPE_EXPLORATION_PROMPT
 from ..tools import FileBackend, LocalFileBackend, CodeReference
+
+if TYPE_CHECKING:
+    from ..file_access import SmartFileAccess
 
 # Maximum number of LLM-guided exploration rounds before forcing synthesis.
 # This limits cost and latency by preventing excessive iterations.
@@ -66,6 +71,7 @@ class ScopedAnalyzer:
         llm_provider: LLMProvider,
         file_backend: FileBackend | None = None,
         max_rounds: int = MAX_EXPLORATION_ROUNDS,
+        smart_access: SmartFileAccess | None = None,
     ):
         """Initialize analyzer.
 
@@ -73,10 +79,12 @@ class ScopedAnalyzer:
             llm_provider: LLM provider for API calls
             file_backend: Backend for file access (created lazily if not provided)
             max_rounds: Maximum exploration rounds before forcing synthesis
+            smart_access: Optional SmartFileAccess for progressive disclosure
         """
         self.llm = llm_provider
         self._file_backend = file_backend
         self.max_rounds = max_rounds
+        self._smart_access = smart_access
 
     def _get_backend(self, repo_path: Path) -> FileBackend:
         """Get or create file backend for the repository.
@@ -113,26 +121,36 @@ class ScopedAnalyzer:
 
         # Track all files we've examined
         examined_files: Dict[str, str] = {}
+        # When using progressive disclosure, track outlines separately for exploration
+        examined_outlines: Dict[str, str] = {}
         all_insights: List[str] = []
         all_key_locations: List[KeyLocation] = []
 
         # Start with candidate files
         files_to_examine = [f["path"] for f in candidate_files]
+        use_outlines = self._smart_access is not None
 
         for round_num in range(self.max_rounds):
             # Read files we haven't examined yet
             for file_path in files_to_examine:
-                if file_path not in examined_files:
-                    content = backend.read_file(file_path)
-                    if content:
-                        examined_files[file_path] = content
+                if file_path not in examined_files and file_path not in examined_outlines:
+                    if use_outlines:
+                        # Progressive: use outlines for exploration (much smaller)
+                        outline = self._smart_access.get_outline(file_path)
+                        if outline:
+                            examined_outlines[file_path] = self._format_outline(outline)
+                    else:
+                        content = backend.read_file(file_path)
+                        if content:
+                            examined_files[file_path] = content
 
-            # Ask LLM if we need more files
+            # Ask LLM if we need more files — use outlines if available, else full contents
+            exploration_contents = examined_outlines if use_outlines else examined_files
             exploration_result = self._explore(
                 question=question,
                 file_tree=file_tree,
                 candidate_files=candidate_files,
-                examined_contents=examined_files,
+                examined_contents=exploration_contents,
             )
 
             all_insights.append(exploration_result.preliminary_insights)
@@ -146,11 +164,20 @@ class ScopedAnalyzer:
             # Queue additional files for next round
             files_to_examine = [
                 f for f in exploration_result.additional_files_needed
-                if f not in examined_files
+                if f not in examined_files and f not in examined_outlines
             ]
 
             if not files_to_examine:
                 break
+
+        # After exploration, read full contents of all relevant files for synthesis
+        if use_outlines:
+            all_paths = list(examined_outlines.keys()) + list(examined_files.keys())
+            for file_path in all_paths:
+                if file_path not in examined_files:
+                    content = backend.read_file(file_path)
+                    if content:
+                        examined_files[file_path] = content
 
         # Convert key locations to CodeReference objects
         code_references = self._deduplicate_references(all_key_locations)
@@ -160,6 +187,27 @@ class ScopedAnalyzer:
             "insights": "\n".join(all_insights),
             "code_references": code_references,
         }
+
+    def _format_outline(self, outline) -> str:
+        """Format a FileOutline as a compact string for exploration prompts.
+
+        Args:
+            outline: FileOutline from SmartFileAccess.get_outline()
+
+        Returns:
+            Compact string representation of the file structure
+        """
+        lines = [f"[{outline.language}] {outline.path} ({outline.line_count} lines)"]
+        if outline.imports:
+            lines.append(f"  imports: {', '.join(outline.imports[:10])}")
+        for sym in outline.symbols:
+            prefix = f"  {'  ' * 0}"
+            sig = f" — {sym.signature}" if sym.signature else ""
+            lines.append(f"{prefix}{sym.kind} {sym.name}{sig} (L{sym.line}-{sym.line_end})")
+            for child in (sym.children or []):
+                child_sig = f" — {child.signature}" if child.signature else ""
+                lines.append(f"    {child.kind} {child.name}{child_sig} (L{child.line}-{child.line_end})")
+        return "\n".join(lines)
 
     def _deduplicate_references(
         self, locations: List[KeyLocation]
