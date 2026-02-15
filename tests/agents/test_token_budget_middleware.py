@@ -192,6 +192,77 @@ class TestTokenBudgetMiddlewareAfterModel:
         mw.after_model(state, runtime=None)
 
 
+class TestPriorityBasedTruncation:
+    """Tests for priority-aware tool output truncation."""
+
+    def _make_middleware(self, max_chars=200):
+        return TokenBudgetMiddleware(
+            max_tool_output_chars=max_chars,
+            throttle=TPMThrottle(max_tpm=100000, safety_factor=1.0),
+            estimator=FakeEstimator(value=100),
+            model_name="test-model",
+        )
+
+    def _make_request(self, tool_name, content_size=500):
+        """Create a fake ToolCallRequest-like object."""
+        from unittest.mock import MagicMock
+        from langchain_core.messages import ToolMessage
+
+        request = MagicMock()
+        request.tool_call = {"name": tool_name, "args": {}, "id": "test-id"}
+
+        result = ToolMessage(content="x" * content_size, tool_call_id="test-id")
+        return request, result
+
+    def test_low_priority_gets_stricter_limit(self):
+        """read_file (LOW priority) should get half the truncation limit."""
+        mw = self._make_middleware(max_chars=200)
+        request, _ = self._make_request("read_file", content_size=500)
+
+        # Handler returns a large result
+        from unittest.mock import MagicMock
+        from langchain_core.messages import ToolMessage
+        handler = MagicMock(return_value=ToolMessage(content="x" * 500, tool_call_id="test-id"))
+
+        result = mw.wrap_tool_call(request, handler)
+
+        # LOW priority should use half limit (100 chars effective)
+        assert len(result.content) < 500
+        # Should be smaller than what HIGH priority would allow
+        assert len(result.content) <= 200  # uses half the limit
+
+    def test_high_priority_gets_full_limit(self):
+        """get_file_outline (HIGH priority) should get the full truncation limit."""
+        mw = self._make_middleware(max_chars=200)
+
+        from unittest.mock import MagicMock
+        from langchain_core.messages import ToolMessage
+        request = MagicMock()
+        request.tool_call = {"name": "get_file_outline", "args": {}, "id": "test-id"}
+        handler = MagicMock(return_value=ToolMessage(content="x" * 500, tool_call_id="test-id"))
+
+        result = mw.wrap_tool_call(request, handler)
+
+        # HIGH priority uses full limit
+        assert "truncated" in result.content
+        # Content should be around the 200 char limit
+        assert len(result.content) > 150  # not overly truncated
+
+    def test_no_tool_call_info_uses_default(self):
+        """When tool_call dict is missing, use default limit."""
+        mw = self._make_middleware(max_chars=200)
+
+        from unittest.mock import MagicMock
+        from langchain_core.messages import ToolMessage
+        request = MagicMock()
+        request.tool_call = {}  # no name
+        handler = MagicMock(return_value=ToolMessage(content="x" * 500, tool_call_id="test-id"))
+
+        result = mw.wrap_tool_call(request, handler)
+        # Should still truncate (uses default limit)
+        assert len(result.content) < 500
+
+
 class TestTokenBudgetMiddlewareRoundTrip:
     """Integration test: before_model + after_model across multiple turns."""
 
