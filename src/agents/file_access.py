@@ -9,7 +9,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
-from .backends import ASTFileAnalysisBackend, FileOutline, SymbolDetail, Reference
+from .backends import FileOutline, SymbolDetail, Reference
 
 if TYPE_CHECKING:
     from .backends.protocol import FileAnalysisBackend
