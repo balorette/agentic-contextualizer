@@ -2,6 +2,7 @@
 
 from .models import SymbolInfo, SymbolDetail, FileOutline, Reference
 from .protocol import FileAnalysisBackend
+from .ast_backend import ASTFileAnalysisBackend
 
 __all__ = [
     "SymbolInfo",
@@ -9,4 +10,5 @@ __all__ = [
     "FileOutline",
     "Reference",
     "FileAnalysisBackend",
+    "ASTFileAnalysisBackend",
 ]
