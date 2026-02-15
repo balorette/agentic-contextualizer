@@ -300,7 +300,10 @@ def create_scoped_agent_with_budget(
     base_url: Optional[str] = None,
     config: Optional["Config"] = None,
 ):
-    """Create scoped agent with budget tracking.
+    """Create scoped agent with budget tracking wired into middleware.
+
+    The BudgetTracker is automatically fed actual token usage via the
+    middleware's after_model hook — no manual extraction needed.
 
     Args:
         repo_path: Path to repository
@@ -311,22 +314,124 @@ def create_scoped_agent_with_budget(
         output_dir: Directory for output files
         debug: Enable verbose logging
         base_url: Optional custom API endpoint URL
+        config: Optional Config override
 
     Returns:
         Tuple of (agent, budget_tracker)
     """
     from ..middleware import BudgetTracker
+    from ..llm.chat_model_factory import build_chat_model, build_token_middleware
+    from ..llm.rate_limiting import TPMThrottle
 
-    agent = create_scoped_agent(
-        repo_path=repo_path,
-        model_name=model_name,
-        checkpointer=checkpointer,
-        output_dir=output_dir,
-        debug=debug,
-        base_url=base_url,
+    repo_path = Path(repo_path).resolve()
+    backend = LocalFileBackend(repo_path)
+
+    if config is None:
+        config = Config.from_env()
+
+    use_litellm = config.llm_provider == "litellm"
+
+    model = build_chat_model(
         config=config,
+        model_name=model_name,
+        base_url=base_url,
+        use_litellm=use_litellm,
+        debug=debug,
     )
 
+    throttle = TPMThrottle(config.max_tpm, config.tpm_safety_factor)
     tracker = BudgetTracker(max_tokens=max_tokens, max_cost_usd=max_cost_usd)
+
+    file_tools = create_file_tools(backend, max_chars=8000, max_search_results=15)
+    analysis_tools = create_analysis_tools(backend)
+    code_search_tools = create_search_tools(
+        backend, max_grep_results=15, max_def_results=15, context_lines=1
+    )
+
+    llm_provider = create_llm_provider(config, throttle=throttle)
+    generator = ScopedGenerator(llm_provider, output_dir)
+
+    @tool
+    def generate_scoped_context(
+        question: str,
+        relevant_file_paths: list[str],
+        insights: str,
+        code_references: list[dict] | None = None,
+    ) -> dict:
+        """Generate the final scoped context markdown file.
+
+        Call this when you have gathered sufficient context to answer the question.
+        Pass the PATHS of relevant files — the tool reads their contents automatically.
+
+        Args:
+            question: The original scope question being answered
+            relevant_file_paths: List of file paths the agent determined are relevant
+            insights: Your analysis and insights about the code
+            code_references: Optional list of code reference dicts with keys:
+                - path: File path
+                - line_start: Starting line number
+                - line_end: Optional ending line number
+                - description: Brief description of what this code does
+
+        Returns:
+            Dictionary with:
+            - output_path: Path to generated markdown file
+            - error: Error message if generation failed
+        """
+        try:
+            if not relevant_file_paths:
+                return {"output_path": None, "error": "relevant_file_paths must not be empty."}
+
+            relevant_files = {}
+            for file_path in relevant_file_paths:
+                content = backend.read_file(file_path)
+                if content is not None:
+                    relevant_files[file_path] = content
+
+            if not relevant_files:
+                return {
+                    "output_path": None,
+                    "error": f"Could not read any of the {len(relevant_file_paths)} provided file paths.",
+                }
+
+            refs = None
+            if code_references:
+                refs = []
+                for ref in code_references:
+                    try:
+                        refs.append(CodeReference(
+                            path=ref["path"],
+                            line_start=ref["line_start"],
+                            line_end=ref.get("line_end"),
+                            description=ref.get("description", ""),
+                        ))
+                    except (KeyError, TypeError, ValueError):
+                        continue
+
+            output_path = generator.generate(
+                repo_name=repo_path.name,
+                question=question,
+                relevant_files=relevant_files,
+                insights=insights,
+                model_name=config.model_name,
+                source_repo=str(repo_path),
+                code_references=refs,
+            )
+            return {"output_path": str(output_path), "error": None}
+        except Exception as e:
+            logger.exception("generate_scoped_context failed")
+            return {"output_path": None, "error": str(e)}
+
+    tools = file_tools + analysis_tools + code_search_tools + [generate_scoped_context]
+    budget_mw = build_token_middleware(config, model_name, throttle=throttle, budget_tracker=tracker)
+
+    agent = create_agent(
+        model=model,
+        tools=tools,
+        system_prompt=SCOPED_AGENT_SYSTEM_PROMPT,
+        middleware=[budget_mw],
+        checkpointer=checkpointer,
+        debug=debug,
+    )
 
     return agent, tracker
