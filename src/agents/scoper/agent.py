@@ -13,9 +13,11 @@ from ..tools import (
     LocalFileBackend,
     CodeReference,
     create_file_tools,
-    create_analysis_tools,
     create_search_tools,
 )
+from ..tools.progressive import create_progressive_tools
+from ..backends import ASTFileAnalysisBackend
+from ..file_access import SmartFileAccess
 from .scoped_generator import ScopedGenerator
 from ..llm.provider import create_llm_provider
 from ..config import Config
@@ -25,85 +27,77 @@ SCOPED_AGENT_SYSTEM_PROMPT = """You are a scoped context generator agent. Your g
 
 ## Available Tools
 
-You have access to the following tools:
-
 ### File Discovery
 1. **search_for_files** - Search for files by keywords (filename or content match)
 2. **grep_in_files** - Search for regex patterns with line numbers and context
-3. **find_code_definitions** - Find function, class, or method definitions by name
 
-### File Analysis
-4. **read_file** - Read file content from the repository
-5. **extract_file_imports** - Parse imports from Python/JS/TS files to find related code
+### Progressive File Analysis (cheapest -> most expensive)
+3. **get_file_outline** (~500 bytes) - Get file structure: imports, symbols, signatures. ALWAYS use this before read_file.
+4. **read_symbol** (~1-2 KB) - Extract a specific function/method/class body by name.
+5. **read_lines** (variable) - Read an exact line range from a file.
+6. **find_references** (~2-3 KB) - Find all usages of a symbol across the codebase.
+7. **read_file** (~8 KB) - Read full file. LAST RESORT — only for config/non-code files.
 
 ### Output Generation
-6. **generate_scoped_context** - Generate the final scoped context markdown file (pass file paths, not contents)
+8. **generate_scoped_context** - Generate the final scoped context markdown file (pass file paths, not contents).
 
 ## Workflow Strategy
 
-Follow this exploration strategy:
+### Step 1: SEARCH
+- Use `search_for_files` with keywords from the scope question to find candidate files.
+- Use `grep_in_files` to search for specific patterns and get line numbers.
 
-### Step 1: Search
-- Use `search_for_files` with keywords from the scope question to find candidate files
-- Use `grep_in_files` to search for specific patterns and get line numbers
-- Use `find_code_definitions` to locate functions or classes by name
+### Step 2: OUTLINE
+- Use `get_file_outline` on the top candidates to see their structure.
+- This shows imports, function names, signatures, and line numbers — WITHOUT reading file bodies.
+- Decide which specific symbols are relevant from the outlines.
 
-### Step 2: Read and Analyze
-- Read the top candidate files with `read_file`
-- Look for the code most relevant to the question
-- **Track important line numbers** as you read
-- Use `extract_file_imports` to find related files
+### Step 3: DRILL
+- Use `read_symbol` to read specific functions or classes you identified in Step 2.
+- Use `read_lines` when you need a specific range (from grep results or outline line numbers).
+- Only use `read_file` for non-code files (config, README, etc.).
 
-### Step 3: Follow Dependencies
-- Read imported files that seem relevant
-- Look for test files (they often explain behavior)
-- Check configuration files if relevant
-- Use grep to find usages of key functions
+### Step 4: CONNECT
+- Use `find_references` to see where key functions/classes are used across the codebase.
+- Use `get_file_outline` on referenced files to understand how they fit.
 
-### Step 4: Generate
+### Step 5: GENERATE
 When you have sufficient context (typically 5-15 relevant files), use `generate_scoped_context` with:
-- The list of **file paths** you found relevant (the tool reads contents automatically)
+- The list of **file paths** (the tool reads contents automatically)
 - Your analysis and insights
 - Code references with specific line numbers
 
+## Cost Hierarchy
+
+RULE: Never call read_file on a code file without first calling get_file_outline.
+
+| Tool | Cost | Use When |
+|------|------|----------|
+| get_file_outline | ~500 bytes | Understanding any file's structure |
+| read_symbol | ~1-2 KB | Need a specific function/method body |
+| read_lines | variable | Need an exact line range |
+| find_references | ~2-3 KB | Tracing cross-file relationships |
+| read_file | ~8 KB | Config/non-code files only |
+
 ## Guidelines
 
-- **Budget**: Aim for 10-20 file reads maximum
-- **Focus**: Stay on topic - don't explore tangential code
-- **Tests**: Test files are valuable - they show expected behavior
-- **Imports**: Following imports reveals architecture
+- **Budget**: Aim for 5-10 file outlines + 5-10 symbol reads (much cheaper than 10-20 full file reads)
+- **Focus**: Stay on topic — don't explore tangential code
+- **Tests**: Outline test files to see what's tested, then read specific test functions
+- **Imports**: Outlines show imports — follow them to understand architecture
 - **Line Numbers**: Track and report specific line numbers for key code
 - **Confidence**: Generate output when you can answer the question, not when you've read everything
-- **File Paths**: When calling generate_scoped_context, pass file paths — NOT file contents. The tool reads files automatically.
-
-## Output Format
-
-The final scoped context should answer the user's question with:
-- A clear summary
-- Relevant code locations with **specific line numbers** (e.g., `src/auth.py:45-78`)
-- Key files to examine
-- Usage examples if available
-- A Code References section listing important file:line locations
+- **File Paths**: When calling generate_scoped_context, pass file paths — NOT file contents
 
 ## Token Economy
 
-Every tool result is added to the conversation and sent with each subsequent API call. Large results compound quickly.
+Every tool result is added to the conversation and sent with each subsequent API call. Progressive disclosure keeps this small:
 
-- **grep_in_files**: Start with `max_results=5`. Only increase if you need more matches.
-- **search_for_files**: Start with `max_results=5`. Narrow with more specific keywords rather than increasing results.
-- **find_code_definitions**: Start with `max_results=5`.
-- **read_file**: Large files are automatically truncated. If you only need a section, note the relevant lines and move on.
-- Prefer targeted grep searches over reading entire files.
-- If a tool returns too many results, refine the query instead of reading them all.
+- get_file_outline returns ~500 bytes per file (vs ~8 KB for read_file)
+- read_symbol returns only the code you need (~1-2 KB)
+- A typical session should accumulate ~12 KB of tool results (vs ~35 KB with full file reads)
 
-## Important Notes
-
-- Don't read files you've already read
-- Prioritize files that directly address the question
-- Use grep to quickly find specific patterns instead of reading entire files
-- Track line numbers for important code you discover
-- If the question is ambiguous, make reasonable assumptions
-- Report what you found even if it's incomplete
+Start with outlines. Only drill into symbols you actually need.
 """
 
 
@@ -176,11 +170,14 @@ def create_scoped_agent(
     # are aware of each other's token usage
     throttle = TPMThrottle(config.max_tpm, config.tpm_safety_factor)
 
-    # Create file, analysis, and code search tools bound to backend
-    # Use tighter limits for agent mode to reduce token consumption
+    # Progressive disclosure tools (outline -> symbol -> lines -> references -> read_file)
+    analysis_backend = ASTFileAnalysisBackend()
+    smart_access = SmartFileAccess(backend, analysis_backend)
+    progressive_tools = create_progressive_tools(smart_access, max_read_chars=8000)
+
+    # Keep search_for_files and grep_in_files for file discovery
     file_tools = create_file_tools(backend, max_chars=8000, max_search_results=15)
-    analysis_tools = create_analysis_tools(backend)
-    code_search_tools = create_search_tools(
+    search_tools = create_search_tools(
         backend, max_grep_results=15, max_def_results=15, context_lines=1
     )
 
@@ -271,8 +268,10 @@ def create_scoped_agent(
                 "error": str(e),
             }
 
-    # Combine all tools
-    tools = file_tools + analysis_tools + code_search_tools + [generate_scoped_context]
+    # Combine: discovery tools + progressive tools + generate
+    search_for_files_tool = next(t for t in file_tools if t.name == "search_for_files")
+    grep_tool = next(t for t in search_tools if t.name == "grep_in_files")
+    tools = [search_for_files_tool, grep_tool] + progressive_tools + [generate_scoped_context]
 
     budget_mw = build_token_middleware(config, model_name, throttle=throttle)
 
@@ -342,9 +341,13 @@ def create_scoped_agent_with_budget(
     throttle = TPMThrottle(config.max_tpm, config.tpm_safety_factor)
     tracker = BudgetTracker(max_tokens=max_tokens, max_cost_usd=max_cost_usd)
 
+    # Progressive disclosure tools
+    analysis_backend = ASTFileAnalysisBackend()
+    smart_access = SmartFileAccess(backend, analysis_backend)
+    progressive_tools = create_progressive_tools(smart_access, max_read_chars=8000)
+
     file_tools = create_file_tools(backend, max_chars=8000, max_search_results=15)
-    analysis_tools = create_analysis_tools(backend)
-    code_search_tools = create_search_tools(
+    search_tools = create_search_tools(
         backend, max_grep_results=15, max_def_results=15, context_lines=1
     )
 
@@ -422,7 +425,10 @@ def create_scoped_agent_with_budget(
             logger.exception("generate_scoped_context failed")
             return {"output_path": None, "error": str(e)}
 
-    tools = file_tools + analysis_tools + code_search_tools + [generate_scoped_context]
+    # Combine: discovery tools + progressive tools + generate
+    search_for_files_tool = next(t for t in file_tools if t.name == "search_for_files")
+    grep_tool = next(t for t in search_tools if t.name == "grep_in_files")
+    tools = [search_for_files_tool, grep_tool] + progressive_tools + [generate_scoped_context]
     budget_mw = build_token_middleware(config, model_name, throttle=throttle, budget_tracker=tracker)
 
     agent = create_agent(
