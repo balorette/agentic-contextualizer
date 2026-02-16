@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import PurePosixPath
+
 import tree_sitter_javascript as tsjs
 import tree_sitter_typescript as tsts
 from tree_sitter import Language, Parser
@@ -27,10 +29,8 @@ class TSParser:
 
     def _get_language(self, file_path: str) -> Language:
         """Pick the right tree-sitter language from file extension."""
-        for ext, lang in _LANG_MAP.items():
-            if file_path.endswith(ext):
-                return lang
-        return JS_LANGUAGE  # default
+        ext = PurePosixPath(file_path).suffix.lower()
+        return _LANG_MAP.get(ext, JS_LANGUAGE)
 
     def _parse(self, source: str, file_path: str):
         """Parse source and return tree."""

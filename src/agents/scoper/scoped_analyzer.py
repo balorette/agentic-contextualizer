@@ -201,9 +201,8 @@ class ScopedAnalyzer:
         if outline.imports:
             lines.append(f"  imports: {', '.join(outline.imports[:10])}")
         for sym in outline.symbols:
-            prefix = f"  {'  ' * 0}"
             sig = f" — {sym.signature}" if sym.signature else ""
-            lines.append(f"{prefix}{sym.kind} {sym.name}{sig} (L{sym.line}-{sym.line_end})")
+            lines.append(f"  {sym.kind} {sym.name}{sig} (L{sym.line}-{sym.line_end})")
             for child in (sym.children or []):
                 child_sig = f" — {child.signature}" if child.signature else ""
                 lines.append(f"    {child.kind} {child.name}{child_sig} (L{child.line}-{child.line_end})")

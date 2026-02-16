@@ -5,7 +5,6 @@ Uses stdlib ast for Python and tree-sitter for JS/TS.
 
 from __future__ import annotations
 
-import re
 from pathlib import PurePosixPath
 from typing import TYPE_CHECKING
 
@@ -13,7 +12,7 @@ from .models import FileOutline, SymbolDetail, Reference
 from .parsers import PythonParser, TSParser
 
 if TYPE_CHECKING:
-    from src.agents.tools.backends import FileBackend
+    from ..tools.backends import FileBackend
 
 # Extension to language mapping
 _PYTHON_EXTS = {".py", ".pyi"}
@@ -78,7 +77,6 @@ class ASTFileAnalysisBackend:
     ) -> list[Reference]:
         """Grep-based reference finding. LSP backend will replace this."""
         refs: list[Reference] = []
-        pattern = re.compile(re.escape(symbol_name))
 
         for path in file_backend.walk_files(root=scope or ""):
             ext = PurePosixPath(path).suffix.lower()
@@ -90,7 +88,7 @@ class ASTFileAnalysisBackend:
                 continue
 
             for i, line in enumerate(content.splitlines(), start=1):
-                if pattern.search(line):
+                if symbol_name in line:
                     refs.append(Reference(path=path, line=i, context=line.strip()))
 
             if len(refs) >= 50:
