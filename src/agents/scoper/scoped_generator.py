@@ -1,13 +1,18 @@
 """Scoped context file generation."""
 
+from __future__ import annotations
+
 import re
 import yaml
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, TYPE_CHECKING
 from ..llm.provider import LLMProvider
 from ..llm.prompts import SCOPE_GENERATION_PROMPT
 from ..models import ScopedContextMetadata
 from ..tools import CodeReference
+
+if TYPE_CHECKING:
+    from ..file_access import SmartFileAccess
 
 # Maximum number of characters from each file to include in the generation prompt.
 # Files exceeding this limit are truncated to prevent LLM context overflow.
@@ -22,15 +27,22 @@ MAX_TOTAL_CONTENT_CHARS = 120_000
 class ScopedGenerator:
     """Generates scoped context markdown files."""
 
-    def __init__(self, llm_provider: LLMProvider, output_dir: Path):
+    def __init__(
+        self,
+        llm_provider: LLMProvider,
+        output_dir: Path,
+        smart_access: SmartFileAccess | None = None,
+    ):
         """Initialize generator.
 
         Args:
             llm_provider: LLM provider for text generation
             output_dir: Directory to write context files
+            smart_access: Optional SmartFileAccess (reserved for future use)
         """
         self.llm = llm_provider
         self.output_dir = output_dir
+        self._smart_access = smart_access
 
     def generate(
         self,

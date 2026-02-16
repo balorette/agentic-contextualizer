@@ -16,6 +16,8 @@
   - [Agent Factory](#agent-factory)
   - [Tools](#tools)
   - [Middleware](#middleware)
+  - [SmartFileAccess](#smartfileaccess)
+  - [Backends (Semantic Analysis)](#backends-semantic-analysis)
   - [Memory](#memory)
   - [Repo Resolver](#repo-resolver)
 
@@ -502,27 +504,40 @@ Raises `ValueError` if `checkpointer` is `None`.
 
 **Module:** `src/agents/tools/`
 
-#### File Tools
+#### Discovery Tools (Scoped Agent)
 
 | Tool | Parameters | Returns | Description |
 |------|-----------|---------|-------------|
-| `read_file` | `path: str, max_chars: int = 13500` | `ReadFileOutput` | Read file with truncation |
 | `search_for_files` | `keywords: list[str]` | `SearchFilesOutput` | Search by filename and content |
-
-#### Search Tools
-
-| Tool | Parameters | Returns | Description |
-|------|-----------|---------|-------------|
 | `grep_in_files` | `pattern: str, file_pattern: str \| None` | `GrepOutput` | Regex search across files |
-| `find_code_definitions` | `name: str` | `FindDefinitionsOutput` | Find function/class definitions |
 
-#### Analysis Tools
+#### Progressive Disclosure Tools (Scoped Agent)
 
-| Tool | Parameters | Returns | Description |
-|------|-----------|---------|-------------|
-| `extract_file_imports` | `path: str` | `ExtractImportsOutput` | Extract imports (Python/JS/TS) |
+These tools implement the outline → symbol → lines → references → file hierarchy. Listed cheapest-first.
 
-#### Repository Tools
+| Tool | Parameters | Returns | Output Size | Description |
+|------|-----------|---------|------------|-------------|
+| `get_file_outline` | `file_path: str` | `dict` (FileOutline) | ~500 bytes | Imports, symbols, signatures (no bodies) |
+| `read_symbol` | `file_path: str, symbol_name: str` | `dict` (SymbolDetail) | ~1-2 KB | Extract specific function/class body |
+| `read_lines` | `file_path: str, start_line: int, end_line: int` | `dict` | variable | Read exact line range (1-indexed, inclusive) |
+| `find_references` | `symbol_name: str, scope: str \| None` | `dict` | ~2-3 KB | Find all usages across codebase (max 30) |
+| `read_file` | `file_path: str` | `dict` | ~8 KB max | Full file content (last resort) |
+
+**Factory:** `create_progressive_tools(smart_access, max_read_chars=8000, max_refs=30) → list[BaseTool]`
+
+```python
+from agents.tools.progressive import create_progressive_tools
+from agents.file_access import SmartFileAccess
+from agents.backends import ASTFileAnalysisBackend
+from agents.tools.backends.local import LocalFileBackend
+
+backend = LocalFileBackend(repo_path)
+analysis = ASTFileAnalysisBackend()
+smart = SmartFileAccess(backend, analysis)
+tools = create_progressive_tools(smart)
+```
+
+#### Repository Tools (Full Agent)
 
 | Tool | Parameters | Returns | Description |
 |------|-----------|---------|-------------|
@@ -532,7 +547,7 @@ Raises `ValueError` if `checkpointer` is `None`.
 | `generate_context` | `repo_path, user_summary, metadata_dict, analysis_dict` | `GenerateContextOutput` | Generate context file |
 | `refine_context` | `context_file_path, refinement_request` | `RefineContextOutput` | Refine existing context |
 
-#### Exploration Tools
+#### Exploration Tools (Full Agent)
 
 | Tool | Parameters | Returns | Description |
 |------|-----------|---------|-------------|
@@ -566,6 +581,120 @@ tracker.print_summary()   # Pretty-print
 #### `extract_token_usage_from_response(message) → TokenUsage | None`
 
 Extracts token counts from LangChain message metadata.
+
+#### `TokenBudgetMiddleware`
+
+Agent middleware for token budget control with priority-aware tool output truncation.
+
+```python
+from agents.middleware.token_budget import TokenBudgetMiddleware
+
+mw = TokenBudgetMiddleware(
+    max_input_tokens=20_000,
+    max_tool_output_chars=12_000,
+    throttle=throttle,        # Optional TPMThrottle
+    estimator=estimator,      # Optional TokenEstimator
+    budget_tracker=tracker,   # Optional BudgetTracker
+)
+```
+
+| Method | Hook | Purpose |
+|--------|------|---------|
+| `before_model()` | Pre-LLM | Trim old messages + TPM throttling |
+| `after_model()` | Post-LLM | Record token usage to throttle and budget |
+| `wrap_tool_call()` | Tool output | Priority-aware truncation (LOW gets half limit) |
+
+#### Context Priority
+
+**Module:** `src/agents/middleware/context_priority.py`
+
+```python
+from agents.middleware.context_priority import get_tool_priority, ToolResultPriority, summarize_tool_result
+
+priority = get_tool_priority("read_file")         # ToolResultPriority.LOW
+priority = get_tool_priority("get_file_outline")   # ToolResultPriority.HIGH
+
+summary = summarize_tool_result("read_file", {"path": "f.py", "content": "...", "char_count": 5000})
+# Returns compact summary: {"path": "f.py", "_summarized": true, "char_count": 5000, ...}
+```
+
+| Value | Level | Tools |
+|-------|-------|-------|
+| 3 | HIGH | `get_file_outline`, `search_for_files`, `grep_in_files`, `generate_scoped_context` |
+| 2 | MEDIUM | `read_symbol`, `read_lines`, `find_references` |
+| 1 | LOW | `read_file` |
+
+---
+
+### SmartFileAccess
+
+**Module:** `src/agents/file_access.py`
+
+Unified file access layer composing `FileBackend` (I/O) with `FileAnalysisBackend` (semantic analysis). Optionally accepts an LSP backend that takes priority with AST fallback.
+
+```python
+from agents.file_access import SmartFileAccess
+from agents.backends import ASTFileAnalysisBackend
+from agents.tools.backends.local import LocalFileBackend
+
+backend = LocalFileBackend(repo_path)
+analysis = ASTFileAnalysisBackend()
+smart = SmartFileAccess(backend, analysis)
+```
+
+| Method | Parameters | Returns | Description |
+|--------|-----------|---------|-------------|
+| `get_outline` | `file_path: str` | `FileOutline \| None` | Imports + symbols (no bodies) |
+| `read_symbol` | `file_path: str, symbol_name: str` | `SymbolDetail \| None` | Single symbol with body |
+| `read_lines` | `file_path: str, start: int, end: int` | `str \| None` | Line range (1-indexed, inclusive) |
+| `find_references` | `symbol_name: str, scope: str \| None` | `list[Reference]` | Symbol usages across codebase |
+| `read_file` | `file_path: str, max_chars: int = 500_000` | `str \| None` | Full file content (last resort) |
+
+---
+
+### Backends (Semantic Analysis)
+
+**Module:** `src/agents/backends/`
+
+#### `FileAnalysisBackend` (Protocol)
+
+```python
+from agents.backends import FileAnalysisBackend
+
+class MyBackend:
+    def get_outline(self, file_path: str, source: str) -> FileOutline: ...
+    def read_symbol(self, file_path: str, symbol_name: str, source: str) -> SymbolDetail | None: ...
+    def find_references(self, symbol_name: str, file_backend, scope: str | None) -> list[Reference]: ...
+```
+
+Note: Methods receive source code as a string (not file paths). `SmartFileAccess` handles file reading.
+
+#### `ASTFileAnalysisBackend`
+
+Default implementation using stdlib `ast` for Python and tree-sitter for JS/TS.
+
+```python
+from agents.backends import ASTFileAnalysisBackend
+
+backend = ASTFileAnalysisBackend()
+outline = backend.get_outline("src/main.py", source_code)
+detail = backend.read_symbol("src/main.py", "authenticate", source_code)
+refs = backend.find_references("authenticate", file_backend, scope="src/")
+```
+
+**Supported languages:**
+- Python (`.py`, `.pyi`) — stdlib `ast`
+- JavaScript (`.js`, `.jsx`, `.mjs`) — tree-sitter
+- TypeScript (`.ts`, `.tsx`) — tree-sitter
+
+#### Data Models
+
+| Model | Fields | Description |
+|-------|--------|-------------|
+| `SymbolInfo` | name, kind, line, line_end, signature, children, decorators, docstring | Outline element |
+| `SymbolDetail` | (extends SymbolInfo) + body, parent, char_count | Symbol with source body |
+| `FileOutline` | path, language, imports, symbols, line_count | File structure overview |
+| `Reference` | path, line, context | Symbol usage location |
 
 ---
 

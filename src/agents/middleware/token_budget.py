@@ -128,24 +128,40 @@ class TokenBudgetMiddleware(AgentMiddleware):
         return None
 
     def wrap_tool_call(self, request, handler):
-        """Truncate tool outputs that exceed the character limit."""
+        """Truncate tool outputs that exceed the character limit.
+
+        Priority-aware: LOW priority tools (e.g. read_file) get a stricter
+        limit to preserve context space for navigational results.
+        """
+        from .context_priority import get_tool_priority, ToolResultPriority
+
         result = handler(request)
 
         if self.max_tool_output_chars and result.content:
+            # Determine effective limit based on tool priority
+            tool_name = ""
+            tool_call = getattr(request, "tool_call", None)
+            if isinstance(tool_call, dict):
+                tool_name = tool_call.get("name", "")
+
+            priority = get_tool_priority(tool_name) if tool_name else ToolResultPriority.MEDIUM
+            if priority == ToolResultPriority.LOW:
+                effective_limit = self.max_tool_output_chars // 2
+            else:
+                effective_limit = self.max_tool_output_chars
+
             content = result.content
-            if isinstance(content, str) and len(content) > self.max_tool_output_chars:
+            if isinstance(content, str) and len(content) > effective_limit:
                 result.content = (
-                    content[: self.max_tool_output_chars]
-                    + f"\n... [truncated, {len(content) - self.max_tool_output_chars} chars omitted]"
+                    content[:effective_limit]
+                    + f"\n... [truncated, {len(content) - effective_limit} chars omitted]"
                 )
             elif isinstance(content, (dict, list)):
                 serialized = json.dumps(content)
-                if len(serialized) > self.max_tool_output_chars:
-                    # Truncate as a plain string with a clear marker so
-                    # downstream code doesn't try to parse broken JSON.
+                if len(serialized) > effective_limit:
                     result.content = (
-                        f"[truncated tool output — {len(serialized)} chars, limit {self.max_tool_output_chars}]\n"
-                        + serialized[: self.max_tool_output_chars]
+                        f"[truncated tool output — {len(serialized)} chars, limit {effective_limit}]\n"
+                        + serialized[:effective_limit]
                     )
 
         return result

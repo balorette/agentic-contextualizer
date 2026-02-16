@@ -91,6 +91,9 @@ from .repository_tools import (
     set_allowed_repo_root,
 )
 
+# Progressive disclosure tools
+from .progressive import create_progressive_tools
+
 # Exploration tools (kept for backward compatibility)
 from .exploration_tools import (
     read_file_snippet,
@@ -154,6 +157,8 @@ __all__ = [
     "generate_context",
     "refine_context",
     "set_allowed_repo_root",
+    # Progressive disclosure tools
+    "create_progressive_tools",
     # Exploration tools (backward compatibility)
     "read_file_snippet",
 ]

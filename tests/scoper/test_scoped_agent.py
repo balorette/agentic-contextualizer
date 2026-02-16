@@ -70,13 +70,15 @@ class TestCreateScopedAgent:
         call_kwargs = mock_create_agent.call_args[1]
         tools = call_kwargs["tools"]
 
-        # Should have: file tools, analysis tools, code search tools, and generate_scoped_context
+        # Should have: discovery tools, progressive tools, and generate_scoped_context
         tool_names = [t.name for t in tools]
-        assert "read_file" in tool_names
         assert "search_for_files" in tool_names
-        assert "extract_file_imports" in tool_names
         assert "grep_in_files" in tool_names
-        assert "find_code_definitions" in tool_names
+        assert "get_file_outline" in tool_names
+        assert "read_symbol" in tool_names
+        assert "read_lines" in tool_names
+        assert "find_references" in tool_names
+        assert "read_file" in tool_names
         assert "generate_scoped_context" in tool_names
 
     def test_uses_custom_backend(
@@ -180,13 +182,25 @@ class TestCreateScopedAgent:
     ):
         """Test that agent factory passes tighter limits to tool factories."""
         from src.agents.scoper.agent import create_scoped_agent
+        from langchain_core.tools import tool as tool_decorator
+
+        # Create minimal fake tools so next() can find search_for_files / grep_in_files
+        @tool_decorator
+        def search_for_files(query: str) -> str:
+            """Fake."""
+            return ""
+
+        @tool_decorator
+        def grep_in_files(pattern: str) -> str:
+            """Fake."""
+            return ""
 
         with patch("src.agents.scoper.agent.create_file_tools") as mock_file_tools, \
              patch("src.agents.scoper.agent.create_search_tools") as mock_search_tools, \
-             patch("src.agents.scoper.agent.create_analysis_tools") as mock_analysis_tools:
-            mock_file_tools.return_value = []
-            mock_search_tools.return_value = []
-            mock_analysis_tools.return_value = []
+             patch("src.agents.scoper.agent.create_progressive_tools") as mock_progressive:
+            mock_file_tools.return_value = [search_for_files]
+            mock_search_tools.return_value = [grep_in_files]
+            mock_progressive.return_value = []
 
             create_scoped_agent(sample_repo)
 
@@ -267,35 +281,38 @@ class TestScopedAgentSystemPrompt:
         """Test that system prompt documents available tools."""
         from src.agents.scoper.agent import SCOPED_AGENT_SYSTEM_PROMPT
 
-        assert "read_file" in SCOPED_AGENT_SYSTEM_PROMPT
         assert "search_for_files" in SCOPED_AGENT_SYSTEM_PROMPT
-        assert "extract_file_imports" in SCOPED_AGENT_SYSTEM_PROMPT
         assert "grep_in_files" in SCOPED_AGENT_SYSTEM_PROMPT
-        assert "find_code_definitions" in SCOPED_AGENT_SYSTEM_PROMPT
+        assert "get_file_outline" in SCOPED_AGENT_SYSTEM_PROMPT
+        assert "read_symbol" in SCOPED_AGENT_SYSTEM_PROMPT
+        assert "read_lines" in SCOPED_AGENT_SYSTEM_PROMPT
+        assert "find_references" in SCOPED_AGENT_SYSTEM_PROMPT
+        assert "read_file" in SCOPED_AGENT_SYSTEM_PROMPT
         assert "generate_scoped_context" in SCOPED_AGENT_SYSTEM_PROMPT
 
     def test_prompt_includes_workflow(self):
         """Test that system prompt includes workflow guidance."""
         from src.agents.scoper.agent import SCOPED_AGENT_SYSTEM_PROMPT
 
-        assert "Search" in SCOPED_AGENT_SYSTEM_PROMPT
-        assert "Read" in SCOPED_AGENT_SYSTEM_PROMPT
-        assert "Generate" in SCOPED_AGENT_SYSTEM_PROMPT
+        assert "SEARCH" in SCOPED_AGENT_SYSTEM_PROMPT
+        assert "OUTLINE" in SCOPED_AGENT_SYSTEM_PROMPT
+        assert "DRILL" in SCOPED_AGENT_SYSTEM_PROMPT
+        assert "GENERATE" in SCOPED_AGENT_SYSTEM_PROMPT
 
     def test_prompt_includes_budget_guidance(self):
         """Test that system prompt includes budget guidance."""
         from src.agents.scoper.agent import SCOPED_AGENT_SYSTEM_PROMPT
 
         assert "Budget" in SCOPED_AGENT_SYSTEM_PROMPT
-        assert "10-20" in SCOPED_AGENT_SYSTEM_PROMPT  # file read budget
+        assert "5-10" in SCOPED_AGENT_SYSTEM_PROMPT  # file outline + symbol read budget
 
     def test_prompt_includes_token_economy(self):
         """Test that system prompt includes token economy guidance."""
         from src.agents.scoper.agent import SCOPED_AGENT_SYSTEM_PROMPT
 
-        assert "Token Economy" in SCOPED_AGENT_SYSTEM_PROMPT or "token" in SCOPED_AGENT_SYSTEM_PROMPT.lower()
-        # Should mention keeping results small
-        assert "max_results" in SCOPED_AGENT_SYSTEM_PROMPT
+        assert "Token Economy" in SCOPED_AGENT_SYSTEM_PROMPT
+        # Should mention progressive disclosure benefits
+        assert "500 bytes" in SCOPED_AGENT_SYSTEM_PROMPT
 
 
 class TestGenerateScopedContextTool:

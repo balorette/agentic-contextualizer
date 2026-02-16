@@ -33,10 +33,19 @@ src/agents/
 ├── config.py                  # Config from env vars (Pydantic)
 ├── models.py                  # Core data models
 ├── factory.py                 # LangChain agent factory
+├── file_access.py             # SmartFileAccess (unified I/O + semantic)
 ├── memory.py                  # Checkpointing and state
 ├── observability.py           # LangSmith tracing
 ├── streaming.py               # Real-time streaming output
 ├── repo_resolver.py           # GitHub URL / local path handling
+│
+├── backends/                  # Semantic code analysis
+│   ├── protocol.py            #   FileAnalysisBackend protocol
+│   ├── models.py              #   SymbolInfo, SymbolDetail, FileOutline, Reference
+│   ├── ast_backend.py         #   AST-based implementation
+│   └── parsers/
+│       ├── python_parser.py   #   Python stdlib ast parser
+│       └── ts_parser.py       #   JS/TS tree-sitter parser
 │
 ├── scanner/                   # Phase 1: Static analysis (no LLM)
 │   ├── structure.py           #   File tree walking
@@ -56,9 +65,15 @@ src/agents/
 │
 ├── llm/                       # LLM abstraction
 │   ├── provider.py            #   AnthropicProvider
-│   └── prompts.py             #   Prompt templates
+│   ├── chat_model_factory.py  #   LangChain model factory
+│   ├── litellm_provider.py    #   LiteLLM provider support
+│   ├── prompts.py             #   Prompt templates
+│   ├── rate_limiting.py       #   TPM throttling
+│   └── token_estimator.py     #   Token counting utilities
 │
 ├── middleware/                 # Cross-cutting concerns
+│   ├── token_budget.py        #   TokenBudgetMiddleware (trimming + TPM)
+│   ├── context_priority.py    #   Priority tagging for tool results
 │   ├── budget.py              #   Token/cost budget tracking
 │   └── human_in_the_loop.py   #   Approval gates
 │
@@ -66,10 +81,11 @@ src/agents/
     ├── file.py                #   read_file, search_for_files
     ├── search.py              #   grep_pattern, find_definitions
     ├── analysis.py            #   extract_imports
+    ├── progressive.py         #   Progressive disclosure tools
     ├── repository_tools.py    #   Pipeline step wrappers
     ├── exploration_tools.py   #   list_key_files, read_file_snippet
     ├── schemas.py             #   All Pydantic I/O schemas
-    └── backends/              #   File access abstraction
+    └── backends/              #   File I/O abstraction
         ├── protocol.py        #     FileBackend protocol
         ├── local.py           #     Real filesystem
         └── memory.py          #     In-memory (for tests)
@@ -220,12 +236,29 @@ tests/
 │   ├── test_tools.py        # Scoped tools
 │   └── test_path_traversal.py  # Security tests
 │
-└── agents/
-    ├── test_agent_integration.py
-    ├── test_budget.py
-    └── tools/
-        ├── test_exploration_tools.py
-        └── test_repository_tools.py
+├── agents/
+│   ├── test_agent_integration.py
+│   ├── test_budget.py
+│   ├── test_file_access.py           # SmartFileAccess composition
+│   ├── backends/
+│   │   ├── test_models.py            # SymbolInfo, FileOutline, Reference
+│   │   ├── test_protocol.py          # FileAnalysisBackend protocol
+│   │   ├── test_ast_backend.py       # ASTFileAnalysisBackend
+│   │   └── parsers/
+│   │       ├── test_python_parser.py  # Python symbol extraction
+│   │       └── test_ts_parser.py      # JS/TS symbol extraction
+│   ├── middleware/
+│   │   ├── test_token_budget_middleware.py  # Trimming + priority-aware truncation
+│   │   └── test_context_priority.py        # Priority tagging
+│   └── tools/
+│       ├── test_exploration_tools.py
+│       ├── test_repository_tools.py
+│       └── test_progressive_tools.py  # Progressive disclosure tools
+│
+└── integration/
+    ├── test_integration.py            # End-to-end full pipeline
+    ├── test_scope_integration.py      # End-to-end scoped pipeline
+    └── test_progressive_disclosure.py # Progressive flow (<8KB context)
 ```
 
 ### Integration Tests
@@ -233,6 +266,7 @@ tests/
 - `test_integration.py` — End-to-end pipeline test
 - `test_scope_integration.py` — End-to-end scoped pipeline
 - `test_agent_integration.py` — Agent mode with mocked LLM
+- `test_progressive_disclosure.py` — Simulates agent exploration with in-memory backend, verifies progressive flow produces <8 KB context (vs 35+ KB with full file reads)
 
 ### Security Tests
 

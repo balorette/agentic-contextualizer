@@ -141,6 +141,8 @@ Uses a LangChain agent that autonomously decides which tools to call. More flexi
 python -m agents.main generate /repo -s "description" --mode agent
 ```
 
+**Scoped agent mode** uses progressive disclosure to minimize token usage. Instead of reading full files, the agent first outlines files (~500 bytes), then reads only the specific functions it needs (~1-2 KB each). This reduces cumulative context from ~35 KB to ~12 KB per session (~65% reduction).
+
 ### Streaming
 
 Add `--stream` for real-time output in agent mode:
@@ -190,9 +192,12 @@ The generated context files work with any AI coding assistant. Common approaches
 | Generate (pipeline) | 2 | ~$0.05-0.15 |
 | Refine | 1 | ~$0.02-0.05 |
 | Scope (pipeline) | 2-4 | ~$0.05-0.20 |
+| Scope (agent) | 2-5 | ~$0.03-0.15 |
 | Generate (agent) | 2-5 | ~$0.05-0.30 |
 
 Costs depend on repository size and model used. The tool enforces content limits to keep costs predictable.
+
+Scoped agent mode with progressive disclosure is more cost-efficient than before — by reading file outlines instead of full files, each LLM call processes ~65% less context, reducing both token usage and cost.
 
 ## Troubleshooting
 
