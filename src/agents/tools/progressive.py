@@ -141,11 +141,12 @@ def create_progressive_tools(
         if content is None:
             return {"error": f"File not found: {file_path}", "path": file_path}
 
-        truncated = len(content) >= max_read_chars
+        truncated = len(content) > max_read_chars
+        visible_content = content[:max_read_chars] if truncated else content
         return {
             "path": file_path,
-            "content": content[:max_read_chars],
-            "char_count": len(content[:max_read_chars]),
+            "content": visible_content,
+            "char_count": len(visible_content),
             "truncated": truncated,
         }
 
