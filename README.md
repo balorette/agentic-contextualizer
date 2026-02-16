@@ -210,7 +210,7 @@ python -m agents.main scope /path/to/repo \
 
 **How scoping works:**
 1. **Discovery** - Extracts keywords, searches for matching files
-2. **Exploration** - LLM analyzes candidates, follows imports/tests
+2. **Exploration** - LLM analyzes candidates using progressive disclosure (outlines, then targeted symbol reads)
 3. **Synthesis** - Generates focused context for the specific question
 
 **Output:** `contexts/{repo-name}/scope-{topic}.md`
@@ -243,6 +243,8 @@ The tool makes exactly **2 LLM calls** per generation:
 
 Refinement makes **1 additional call** per request.
 
+Scoped context (agent mode) uses **progressive disclosure** — the agent reads file outlines (~500 bytes) before full files (~8 KB), reducing cumulative context by ~65% and keeping costs low.
+
 ## Development
 
 ```bash
@@ -258,7 +260,7 @@ ruff check src/ tests/
 
 ## Architecture
 
-See [CLAUDE.md](CLAUDE.md) for detailed architecture and design decisions.
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for detailed architecture documentation and [CLAUDE.md](CLAUDE.md) for high-level design decisions.
 
 ## License
 
