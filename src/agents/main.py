@@ -123,6 +123,14 @@ def _run_agent(agent, user_message: str, agent_config: dict, stream: bool, debug
 
     Handles TTY detection for streaming and common exception handling.
     """
+    # Inject Langfuse callback handler (no-op when Langfuse is not configured)
+    from .observability import get_langfuse_callback_handler
+
+    langfuse_handler = get_langfuse_callback_handler()
+    if langfuse_handler:
+        existing_callbacks = agent_config.get("callbacks", [])
+        agent_config["callbacks"] = existing_callbacks + [langfuse_handler]
+
     try:
         if stream:
             from .streaming import stream_agent_execution, simple_stream_agent_execution
@@ -277,6 +285,7 @@ def _generate_agent_mode(repo: Path, summary: str, config: Config, debug: bool, 
     from .factory import create_contextualizer_agent
     from .memory import create_checkpointer, create_agent_config
     from .observability import configure_tracing, is_tracing_enabled
+    from .observability import configure_langfuse_tracing, is_langfuse_tracing_enabled
     from .tools.repository_tools import set_tool_config, set_allowed_repo_root
 
     click.echo(f"🤖 Agent mode: Analyzing repository: {repo}")
@@ -289,8 +298,9 @@ def _generate_agent_mode(repo: Path, summary: str, config: Config, debug: bool, 
     set_tool_config(config)
     set_allowed_repo_root(repo)
 
-    # Configure tracing
+    # Configure tracing (LangSmith + Langfuse)
     configure_tracing()
+    configure_langfuse_tracing()
 
     # Create checkpointer for state persistence
     checkpointer = create_checkpointer()
@@ -317,7 +327,9 @@ def _generate_agent_mode(repo: Path, summary: str, config: Config, debug: bool, 
 
     click.echo(f"   Thread ID: {agent_config['configurable']['thread_id']}")
     if is_tracing_enabled():
-        click.echo(f"   Tracing: Enabled")
+        click.echo("   Tracing: LangSmith enabled")
+    if is_langfuse_tracing_enabled():
+        click.echo("   Tracing: Langfuse enabled")
 
     return _run_agent(agent, user_message, agent_config, stream, debug)
 
@@ -382,6 +394,7 @@ def _refine_agent_mode(context_path: Path, request: str, config: Config, debug: 
     from .factory import create_contextualizer_agent
     from .memory import create_checkpointer, create_agent_config
     from .observability import configure_tracing, is_tracing_enabled
+    from .observability import configure_langfuse_tracing, is_langfuse_tracing_enabled
     from .tools.repository_tools import set_tool_config, set_allowed_repo_root
 
     click.echo(f"🤖 Agent mode: Refining context: {context_path}")
@@ -404,8 +417,9 @@ def _refine_agent_mode(context_path: Path, request: str, config: Config, debug: 
     if repo_path.is_dir():
         set_allowed_repo_root(repo_path)
 
-    # Configure tracing
+    # Configure tracing (LangSmith + Langfuse)
     configure_tracing()
+    configure_langfuse_tracing()
 
     # Create checkpointer (same instance will restore previous conversation)
     checkpointer = create_checkpointer()
@@ -433,7 +447,9 @@ def _refine_agent_mode(context_path: Path, request: str, config: Config, debug: 
     click.echo(f"   Thread ID: {agent_config['configurable']['thread_id']}")
     click.echo(f"   (Using same thread as generation for context continuity)")
     if is_tracing_enabled():
-        click.echo(f"   Tracing: Enabled")
+        click.echo("   Tracing: LangSmith enabled")
+    if is_langfuse_tracing_enabled():
+        click.echo("   Tracing: Langfuse enabled")
 
     return _run_agent(agent, user_message, agent_config, stream, debug)
 
@@ -620,6 +636,7 @@ def _scope_agent_mode(
     # Set tool config for consistency
     set_tool_config(config)
     from .observability import configure_tracing, is_tracing_enabled
+    from .observability import configure_langfuse_tracing, is_langfuse_tracing_enabled
 
     click.echo(f"🤖 Agent mode: Scoping '{question}'")
 
@@ -642,8 +659,9 @@ def _scope_agent_mode(
     if repo_path.is_dir():
         set_allowed_repo_root(repo_path)
 
-    # Configure tracing
+    # Configure tracing (LangSmith + Langfuse)
     configure_tracing()
+    configure_langfuse_tracing()
 
     # Create checkpointer
     checkpointer = create_checkpointer()
@@ -672,7 +690,9 @@ def _scope_agent_mode(
 
     click.echo(f"   Thread ID: {agent_config['configurable']['thread_id']}")
     if is_tracing_enabled():
-        click.echo("   Tracing: Enabled")
+        click.echo("   Tracing: LangSmith enabled")
+    if is_langfuse_tracing_enabled():
+        click.echo("   Tracing: Langfuse enabled")
 
     return _run_agent(agent, user_message, agent_config, stream, debug)
 
