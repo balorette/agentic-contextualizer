@@ -183,5 +183,6 @@ def get_langfuse_callback_handler():
         from langfuse.langchain import CallbackHandler
 
         return CallbackHandler()
-    except Exception:
+    except Exception as e:
+        logger.warning("Langfuse CallbackHandler setup failed: %s", e)
         return None

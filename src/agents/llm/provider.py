@@ -1,5 +1,6 @@
 """Abstract LLM provider interface."""
 
+import warnings
 from abc import ABC, abstractmethod
 from typing import Any, Optional, Type, TYPE_CHECKING
 from pydantic import BaseModel
@@ -10,6 +11,21 @@ from langchain_core.rate_limiters import InMemoryRateLimiter
 if TYPE_CHECKING:
     from ..config import Config
     from .rate_limiting import TPMThrottle
+
+
+def suppress_pydantic_serializer_warnings() -> None:
+    """Suppress Pydantic serialization warnings from ChatLiteLLM.
+
+    ChatLiteLLM returns ChatGeneration/AIMessage subtypes with provider-specific
+    metadata fields (e.g. Anthropic's cache_creation).  Pydantic v2 warns when
+    serializing union members whose actual type carries extra fields beyond the
+    base schema, but the data still round-trips correctly.
+    """
+    warnings.filterwarnings(
+        "ignore",
+        category=UserWarning,
+        module=r"pydantic\.main",
+    )
 
 
 def coerce_content(content: Any) -> str:
@@ -38,7 +54,10 @@ def coerce_content(content: Any) -> str:
                 text = block.get("text")
                 if text:
                     parts.append(text)
-                continue
+                    continue
+
+            # Fallback: ensure unhandled block types are still represented
+            parts.append(str(block))
         return "".join(parts).strip()
 
     return str(content)

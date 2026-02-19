@@ -1,24 +1,15 @@
 """LiteLLM provider for multi-provider LLM support via LangChain."""
 
 import logging
-import warnings
 from typing import Optional, Type
 
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_litellm import ChatLiteLLM
 from pydantic import BaseModel
 
-# Suppress Pydantic serialization warnings caused by ChatLiteLLM returning
-# ChatGeneration/AIMessage subtypes with provider-specific metadata fields.
-# See chat_model_factory.py for full explanation.
-warnings.filterwarnings(
-    "ignore",
-    message=r"Pydantic serializer warnings",
-    category=UserWarning,
-    module=r"pydantic\.main",
-)
+from .provider import LLMProvider, LLMResponse, coerce_content, suppress_pydantic_serializer_warnings
 
-from .provider import LLMProvider, LLMResponse, coerce_content
+suppress_pydantic_serializer_warnings()
 
 logger = logging.getLogger(__name__)
 
