@@ -13,7 +13,7 @@ from langchain.chat_models import init_chat_model
 from langchain_core.language_models import BaseChatModel
 
 from ..config import Config
-from .provider import _resolve_api_key_for_model, _strip_provider_prefix
+from .provider import _resolve_api_key_for_model, _strip_provider_prefix, suppress_pydantic_serializer_warnings
 
 if TYPE_CHECKING:
     from .rate_limiting import TPMThrottle
@@ -96,6 +96,8 @@ def _build_litellm_model(
 ) -> BaseChatModel:
     """Build a ChatLiteLLM model instance."""
     from langchain_litellm import ChatLiteLLM
+
+    suppress_pydantic_serializer_warnings()
 
     if debug:
         import litellm

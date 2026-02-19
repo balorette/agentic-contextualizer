@@ -1,4 +1,8 @@
-"""LangSmith tracing and observability configuration."""
+"""Tracing and observability configuration.
+
+Supports multiple backends (LangSmith, Langfuse) that can coexist.
+Each backend is independently toggled via its own environment variables.
+"""
 
 import logging
 import os
@@ -117,3 +121,68 @@ def get_trace_url(run_id: str) -> str:
         )
     except Exception:
         return ""
+
+
+# ---------------------------------------------------------------------------
+# Langfuse Tracing
+# ---------------------------------------------------------------------------
+
+def configure_langfuse_tracing(
+    project_name: str = "agentic-contextualizer",
+) -> None:
+    """Configure Langfuse tracing (coexists with LangSmith).
+
+    Initializes the Langfuse singleton client if credentials are present.
+    Safe to call multiple times — subsequent calls are no-ops.
+
+    Environment Variables:
+        LANGFUSE_PUBLIC_KEY: Public key from Langfuse project settings
+        LANGFUSE_SECRET_KEY: Secret key from Langfuse project settings
+        LANGFUSE_BASE_URL: Langfuse host (default: https://cloud.langfuse.com)
+    """
+    public_key = os.getenv("LANGFUSE_PUBLIC_KEY")
+    secret_key = os.getenv("LANGFUSE_SECRET_KEY")
+
+    if not public_key or not secret_key:
+        logger.info("Langfuse keys not found. Langfuse tracing disabled.")
+        return
+
+    try:
+        from langfuse import Langfuse
+
+        Langfuse(
+            public_key=public_key,
+            secret_key=secret_key,
+        )
+        logger.info("Langfuse tracing enabled — Project: %s", project_name)
+    except Exception as e:
+        logger.warning("Langfuse tracing setup failed: %s", e)
+
+
+def is_langfuse_tracing_enabled() -> bool:
+    """Check if Langfuse tracing credentials are configured.
+
+    Returns:
+        True if both LANGFUSE_PUBLIC_KEY and LANGFUSE_SECRET_KEY are set.
+    """
+    return bool(
+        os.getenv("LANGFUSE_PUBLIC_KEY") and os.getenv("LANGFUSE_SECRET_KEY")
+    )
+
+
+def get_langfuse_callback_handler():
+    """Get a Langfuse CallbackHandler for LangChain/LangGraph tracing.
+
+    Returns:
+        A ``langfuse.langchain.CallbackHandler`` instance, or ``None``
+        if Langfuse is not configured or the import fails.
+    """
+    if not is_langfuse_tracing_enabled():
+        return None
+    try:
+        from langfuse.langchain import CallbackHandler
+
+        return CallbackHandler()
+    except Exception as e:
+        logger.warning("Langfuse CallbackHandler setup failed: %s", e)
+        return None

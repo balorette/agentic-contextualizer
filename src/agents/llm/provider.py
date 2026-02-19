@@ -1,5 +1,6 @@
 """Abstract LLM provider interface."""
 
+import warnings
 from abc import ABC, abstractmethod
 from typing import Any, Optional, Type, TYPE_CHECKING
 from pydantic import BaseModel
@@ -10,6 +11,56 @@ from langchain_core.rate_limiters import InMemoryRateLimiter
 if TYPE_CHECKING:
     from ..config import Config
     from .rate_limiting import TPMThrottle
+
+
+def suppress_pydantic_serializer_warnings() -> None:
+    """Suppress Pydantic serialization warnings from ChatLiteLLM.
+
+    ChatLiteLLM returns ChatGeneration/AIMessage subtypes with provider-specific
+    metadata fields (e.g. Anthropic's cache_creation).  Pydantic v2 warns when
+    serializing union members whose actual type carries extra fields beyond the
+    base schema, but the data still round-trips correctly.
+    """
+    warnings.filterwarnings(
+        "ignore",
+        category=UserWarning,
+        module=r"pydantic\.main",
+    )
+
+
+def coerce_content(content: Any) -> str:
+    """Ensure LangChain responses are flattened into plain text.
+
+    AIMessage.content may be a string, a list of content blocks (dicts or
+    objects with a `text` attribute), or some other type.  This helper
+    normalises all variants into a single string.
+    """
+    if isinstance(content, str):
+        return content
+
+    if isinstance(content, list):
+        parts: list[str] = []
+        for block in content:
+            if isinstance(block, str):
+                parts.append(block)
+                continue
+
+            text = getattr(block, "text", None)
+            if text:
+                parts.append(text)
+                continue
+
+            if isinstance(block, dict):
+                text = block.get("text")
+                if text:
+                    parts.append(text)
+                    continue
+
+            # Fallback: ensure unhandled block types are still represented
+            parts.append(str(block))
+        return "".join(parts).strip()
+
+    return str(content)
 
 
 class LLMResponse(BaseModel):
@@ -96,7 +147,7 @@ class AnthropicProvider(LLMProvider):
 
         try:
             response = self.client.invoke(messages)
-            content = self._coerce_content(response.content)
+            content = coerce_content(response.content)
 
             return LLMResponse(
                 content=content,
@@ -147,34 +198,6 @@ class AnthropicProvider(LLMProvider):
             return result
         except Exception as e:
             raise RuntimeError(f"Structured LLM generation failed: {str(e)}") from e
-
-    @staticmethod
-    def _coerce_content(content: Any) -> str:
-        """Ensure LangChain responses are flattened into plain text."""
-        if isinstance(content, str):
-            return content
-
-        if isinstance(content, list):
-            parts: list[str] = []
-            for block in content:
-                if isinstance(block, str):
-                    parts.append(block)
-                    continue
-
-                text = getattr(block, "text", None)
-                if text:
-                    parts.append(text)
-                    continue
-
-                if isinstance(block, dict):
-                    text = block.get("text")
-                    if text:
-                        parts.append(text)
-                    continue
-            return "".join(parts).strip()
-
-        return str(content)
-
 
 def _strip_provider_prefix(model_name: str) -> str:
     """Strip provider prefix from model names like 'openai:gpt-4o'."""

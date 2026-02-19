@@ -2,7 +2,9 @@
 
 import os
 import pytest
-from agents.llm.provider import AnthropicProvider, LLMResponse, create_llm_provider
+from unittest.mock import MagicMock, patch
+from langchain_core.messages import AIMessage
+from agents.llm.provider import AnthropicProvider, LLMResponse, create_llm_provider, coerce_content
 from agents.llm.litellm_provider import LiteLLMProvider
 from agents.config import Config
 
@@ -36,8 +38,11 @@ def test_anthropic_provider_generate():
     assert response.model == config.model_name
 
 
-def test_litellm_provider_init():
-    """Test LiteLLMProvider initialization stores config."""
+@patch("agents.llm.litellm_provider.ChatLiteLLM")
+def test_litellm_provider_init(mock_chat_litellm_cls):
+    """Test LiteLLMProvider initialization stores config and creates client."""
+    mock_chat_litellm_cls.return_value = MagicMock()
+
     provider = LiteLLMProvider(
         model_name="gpt-4o",
         api_key="test-key",
@@ -51,15 +56,27 @@ def test_litellm_provider_init():
     assert provider.base_url == "https://custom.api"
     assert provider.max_retries == 5
     assert provider.timeout == 120
+    assert provider.client is not None
+
+    # Verify ChatLiteLLM was constructed with correct kwargs
+    call_kwargs = mock_chat_litellm_cls.call_args[1]
+    assert call_kwargs["model"] == "gpt-4o"
+    assert call_kwargs["api_key"] == "test-key"
+    assert call_kwargs["api_base"] == "https://custom.api"
+    assert call_kwargs["max_retries"] == 5
+    assert call_kwargs["request_timeout"] == 120
 
 
-def test_litellm_provider_generate(mocker):
-    """Test LiteLLMProvider.generate() with mocked litellm."""
-    mock_response = mocker.Mock()
-    mock_response.choices = [mocker.Mock(message=mocker.Mock(content="Test response"))]
-    mock_response.usage = mocker.Mock(total_tokens=100)
-
-    mock_completion = mocker.patch("litellm.completion", return_value=mock_response)
+@patch("agents.llm.litellm_provider.ChatLiteLLM")
+def test_litellm_provider_generate(mock_chat_litellm_cls):
+    """Test LiteLLMProvider.generate() with mocked ChatLiteLLM."""
+    mock_ai_message = AIMessage(
+        content="Test response",
+        usage_metadata={"total_tokens": 100, "input_tokens": 40, "output_tokens": 60},
+    )
+    mock_client = MagicMock()
+    mock_client.invoke.return_value = mock_ai_message
+    mock_chat_litellm_cls.return_value = mock_client
 
     provider = LiteLLMProvider(model_name="gpt-4o", api_key="test-key")
     response = provider.generate("Test prompt", system="Test system")
@@ -68,53 +85,60 @@ def test_litellm_provider_generate(mocker):
     assert response.model == "gpt-4o"
     assert response.tokens_used == 100
 
-    # Verify litellm.completion was called correctly
-    mock_completion.assert_called_once()
-    call_kwargs = mock_completion.call_args[1]
-    assert call_kwargs["model"] == "gpt-4o"
-    assert call_kwargs["api_key"] == "test-key"
-    assert call_kwargs["messages"][0]["role"] == "system"
-    assert call_kwargs["messages"][0]["content"] == "Test system"
-    assert call_kwargs["messages"][1]["role"] == "user"
-    assert call_kwargs["messages"][1]["content"] == "Test prompt"
+    # Verify invoke was called with LangChain messages
+    mock_client.invoke.assert_called_once()
+    messages = mock_client.invoke.call_args[0][0]
+    assert len(messages) == 2
+    assert messages[0].content == "Test system"
+    assert messages[1].content == "Test prompt"
 
 
-def test_litellm_provider_auth_error(mocker):
-    """Test LiteLLMProvider handles auth errors with clear messages."""
-    import litellm
+@patch("agents.llm.litellm_provider.ChatLiteLLM")
+def test_litellm_provider_generate_no_system(mock_chat_litellm_cls):
+    """Test LiteLLMProvider.generate() without system prompt."""
+    mock_ai_message = AIMessage(content="Response")
+    mock_client = MagicMock()
+    mock_client.invoke.return_value = mock_ai_message
+    mock_chat_litellm_cls.return_value = mock_client
 
-    mocker.patch(
-        "litellm.completion",
-        side_effect=litellm.AuthenticationError(
-            message="Invalid API key",
-            llm_provider="openai",
-            model="gpt-4o"
-        )
-    )
+    provider = LiteLLMProvider(model_name="gpt-4o", api_key="test-key")
+    provider.generate("Just a prompt")
+
+    messages = mock_client.invoke.call_args[0][0]
+    assert len(messages) == 1
+    assert messages[0].content == "Just a prompt"
+
+
+@patch("agents.llm.litellm_provider.ChatLiteLLM")
+def test_litellm_provider_auth_error(mock_chat_litellm_cls):
+    """Test LiteLLMProvider propagates errors as RuntimeError."""
+    mock_client = MagicMock()
+    mock_client.invoke.side_effect = Exception("Authentication failed: Invalid API key")
+    mock_chat_litellm_cls.return_value = mock_client
 
     provider = LiteLLMProvider(model_name="gpt-4o", api_key="bad-key")
 
-    with pytest.raises(RuntimeError) as exc_info:
+    with pytest.raises(RuntimeError, match="LLM generation failed"):
         provider.generate("Test")
 
-    assert "OpenAI authentication failed" in str(exc_info.value)
-    assert "OPENAI_API_KEY" in str(exc_info.value)
 
-
-def test_litellm_provider_generate_structured(mocker):
-    """Test LiteLLMProvider.generate_structured() uses JSON mode."""
+@patch("agents.llm.litellm_provider.ChatLiteLLM")
+def test_litellm_provider_generate_structured(mock_chat_litellm_cls):
+    """Test LiteLLMProvider.generate_structured() uses with_structured_output."""
     from pydantic import BaseModel
 
     class TestSchema(BaseModel):
         name: str
         count: int
 
-    mock_response = mocker.Mock()
-    mock_response.choices = [
-        mocker.Mock(message=mocker.Mock(content='{"name": "test", "count": 42}'))
-    ]
+    expected_result = TestSchema(name="test", count=42)
 
-    mock_completion = mocker.patch("litellm.completion", return_value=mock_response)
+    mock_structured_chain = MagicMock()
+    mock_structured_chain.invoke.return_value = expected_result
+
+    mock_client = MagicMock()
+    mock_client.with_structured_output.return_value = mock_structured_chain
+    mock_chat_litellm_cls.return_value = mock_client
 
     provider = LiteLLMProvider(model_name="gpt-4o", api_key="test-key")
     result = provider.generate_structured("Generate data", schema=TestSchema)
@@ -123,38 +147,29 @@ def test_litellm_provider_generate_structured(mocker):
     assert result.name == "test"
     assert result.count == 42
 
-    # Verify JSON mode was used
-    call_kwargs = mock_completion.call_args[1]
-    assert call_kwargs["response_format"] == {"type": "json_object"}
+    # Verify with_structured_output was called with the schema class
+    mock_client.with_structured_output.assert_called_once_with(TestSchema)
+    mock_structured_chain.invoke.assert_called_once()
 
 
-def test_litellm_structured_schema_is_json_not_repr(mocker):
-    """Schema in prompt should be valid JSON, not Python dict repr."""
-    from pydantic import BaseModel
-
-    class TestSchema(BaseModel):
-        name: str
-
-    mock_response = mocker.Mock()
-    mock_response.choices = [
-        mocker.Mock(message=mocker.Mock(content='{"name": "test"}'))
-    ]
-    mock_completion = mocker.patch("litellm.completion", return_value=mock_response)
-
+@patch("agents.llm.litellm_provider.ChatLiteLLM")
+def test_litellm_provider_generate_structured_requires_schema(mock_chat_litellm_cls):
+    """Test generate_structured raises ValueError when schema is None."""
+    mock_chat_litellm_cls.return_value = MagicMock()
     provider = LiteLLMProvider(model_name="gpt-4o", api_key="test-key")
-    provider.generate_structured("Generate", schema=TestSchema)
 
-    prompt_sent = mock_completion.call_args[1]["messages"][-1]["content"]
-    # Should contain valid JSON (double quotes), not Python repr (single quotes)
-    assert '"type"' in prompt_sent or '"properties"' in prompt_sent
-    assert "{'type'" not in prompt_sent
+    with pytest.raises(ValueError, match="schema parameter is required"):
+        provider.generate_structured("Generate data")
 
 
 from agents.llm.rate_limiting import RateLimitedProvider
 
 
-def test_create_llm_provider_litellm():
+@patch("agents.llm.litellm_provider.ChatLiteLLM")
+def test_create_llm_provider_litellm(mock_chat_litellm_cls):
     """Test factory creates RateLimitedProvider wrapping LiteLLMProvider."""
+    mock_chat_litellm_cls.return_value = MagicMock()
+
     config = Config(
         llm_provider="litellm",
         model_name="gpt-4o",
@@ -196,8 +211,11 @@ def test_legacy_config_still_works(monkeypatch):
     assert provider.provider.api_key == "test-key"
 
 
-def test_create_llm_provider_wraps_with_rate_limiting():
+@patch("agents.llm.litellm_provider.ChatLiteLLM")
+def test_create_llm_provider_wraps_with_rate_limiting(mock_chat_litellm_cls):
     """Factory should return a RateLimitedProvider with correct TPM config."""
+    mock_chat_litellm_cls.return_value = MagicMock()
+
     config = Config(
         llm_provider="litellm",
         model_name="gpt-4o",
@@ -245,3 +263,19 @@ def test_resolve_api_key_includes_google_in_fallback():
     from agents.llm.provider import _resolve_api_key_for_model
 
     assert _resolve_api_key_for_model("some-unknown-model", config) == "gkey"
+
+
+def test_coerce_content_string():
+    """coerce_content should pass through plain strings."""
+    assert coerce_content("hello") == "hello"
+
+
+def test_coerce_content_list_of_blocks():
+    """coerce_content should flatten a list of content blocks."""
+    blocks = [{"text": "Hello "}, {"text": "world"}]
+    assert coerce_content(blocks) == "Hello world"
+
+
+def test_coerce_content_non_string():
+    """coerce_content should str() fallback for unknown types."""
+    assert coerce_content(42) == "42"
