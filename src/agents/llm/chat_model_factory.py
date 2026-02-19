@@ -7,6 +7,7 @@ into a single authoritative location.
 from __future__ import annotations
 
 import logging
+import warnings
 from typing import TYPE_CHECKING
 
 from langchain.chat_models import init_chat_model
@@ -96,6 +97,18 @@ def _build_litellm_model(
 ) -> BaseChatModel:
     """Build a ChatLiteLLM model instance."""
     from langchain_litellm import ChatLiteLLM
+
+    # Suppress Pydantic serialization warnings caused by ChatLiteLLM returning
+    # ChatGeneration/AIMessage subtypes with provider-specific metadata fields
+    # (e.g. Anthropic's cache_creation).  Pydantic v2 warns when serializing
+    # union members whose actual type carries extra fields beyond the base
+    # schema, but the data still round-trips correctly.
+    warnings.filterwarnings(
+        "ignore",
+        message=r"Pydantic serializer warnings",
+        category=UserWarning,
+        module=r"pydantic\.main",
+    )
 
     if debug:
         import litellm
